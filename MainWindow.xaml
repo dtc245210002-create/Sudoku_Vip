@@ -165,6 +165,13 @@
                     <TextBlock x:Name="txtUserAvatar" Text="👤" Foreground="#90B8ED" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock x:Name="txtUserDisplayName" Text="Khách" Foreground="#60A5FA" FontWeight="Bold" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/><TextBlock Text="🏆 Kỷ lục: " Foreground="#9CA3AF" FontSize="12" VerticalAlignment="Center"/><TextBlock x:Name="txtUserHighScore" Text="0" Foreground="#FBBF24" FontWeight="Bold" FontSize="13" VerticalAlignment="Center"/>
                 </StackPanel></Border>
                 <Button x:Name="btnSaveGuestScore" Content="⭐ Lưu điểm (Đăng ký)" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" Visibility="Collapsed" Click="BtnSaveGuestScore_Click"/>
+
+                <!-- Nút Đấu trường PvP -->
+                <Button x:Name="btnPvp" Content="⚔️ Đấu Trường PvP" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" FontWeight="Bold" Click="BtnPvp_Click"/>
+
+                <!-- Nút Lịch sử thi đấu -->
+
+
                 <Button x:Name="btnHistory" Content="📜 Lịch sử" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnHistory_Click"/>
                 <Button x:Name="btnLogout" Content="🚪 Đăng xuất" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnLogout_Click"/>
             </StackPanel>
