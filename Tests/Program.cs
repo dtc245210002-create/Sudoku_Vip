@@ -23,8 +23,13 @@ internal static class Program
     {
         try
         {
+
             GameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests();
             PvpTests();
+=======
+            GameTests(); MiniGameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests(); WpfFlowTests();
+
+          
             Console.WriteLine($"PASS: {_assertions} assertions; no real database accessed.");
             return 0;
         }
@@ -172,6 +177,7 @@ internal static class Program
         var store=new FakeStore(); AuthService.Store=store;
         AuthService.Logout(); AuthService.LoginAsGuest();
         var window=new MainWindow();
+        Call(window,"StartGame",0);
         PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);
         Call(window,"BtnPencil_Click",window,new RoutedEventArgs());
         Call(window,"BtnPause_Click",window,new RoutedEventArgs());
@@ -180,7 +186,10 @@ internal static class Program
         PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);
         CheckReset(window);
         Call(window,"BtnPause_Click",window,new RoutedEventArgs());
+        Call(window,"ChangeSetup_Click",window,new RoutedEventArgs());
         Call(window,"Difficulty_Click",new Button { Tag="3" },new RoutedEventArgs());
+        Check(!(bool)Field(window,"_isGenerating")! && !((DispatcherTimer)Field(window,"_gameTimer")!).IsEnabled,"difficulty selection waits for explicit start");
+        Call(window,"StartSelectedGame_Click",window,new RoutedEventArgs());
         PumpUntil(()=>!(bool)Field(window,"_isGenerating")!); CheckReset(window);
         Call(window,"StartGame",0); Call(window,"StartGame",1);
         PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);
@@ -200,7 +209,7 @@ internal static class Program
         AuthService.Logout(); var user=store.AddAccount("uiuser",PasswordHasher.Hash("Sample123!"));
         var loginTask=AuthService.LoginAsync("uiuser","Sample123!");
         PumpUntil(()=>loginTask.IsCompleted); Check(loginTask.Result.Success,"UI test account login");
-        var failed=new MainWindow(); PumpUntil(()=>!(bool)Field(failed,"_isGenerating")!);
+        var failed=new MainWindow(); Call(failed,"StartGame",0); PumpUntil(()=>!(bool)Field(failed,"_isGenerating")!);
         outcome=""; Set(failed,"_showOutcome",new Action<string,string,bool>((message,_,_)=>outcome=message));
         store.FailAll=true; m=(SudokuModel)Field(failed,"_currentModel")!; m.CurrentBoard=(int[,])m.SolutionBoard.Clone();
         Call(failed,"HandleGameWon"); PumpUntil(()=>m.SaveState==ResultSaveState.Failed);
@@ -233,6 +242,139 @@ internal static class Program
         historyWindow.Close();
         Console.WriteLine("PASS: actual WPF window/control initialization, pause/new game/difficulty, reset, generation race, completion, failed-save messaging, timer cleanup, stale username response.");
     }
+    private static void MiniGameTests()
+    {
+        int[] targets = [6,8,10,12];
+        for (int level=0;level<4;level++)
+        {
+            int min=16,max=0;
+            for (int sample=0;sample<60;sample++)
+            {
+                var model=Engine.StartNewGame(level,4);
+                var copy=(int[,])model.CurrentBoard.Clone();
+                Check(model.Size==4 && model.BoxSize==2,"mini dimensions");
+                Check(SudokuSolver.CountSolutions(model.CurrentBoard)==1,"4x4 puzzle unique");
+                Check(SudokuSolver.CountSolutions(model.SolutionBoard)==1 && model.SolutionBoard.Cast<int>().All(v=>v>=1&&v<=4),"4x4 solution valid");
+                Check(copy.Cast<int>().SequenceEqual(model.CurrentBoard.Cast<int>()),"4x4 counter does not mutate input");
+                int empty=0;
+                for(int r=0;r<4;r++)for(int c=0;c<4;c++)
+                {
+                    Check(model.IsFixed[r,c]==(model.CurrentBoard[r,c]!=0),"4x4 fixed mask");
+                    Check(!model.IsFixed[r,c]||model.CurrentBoard[r,c]==model.SolutionBoard[r,c],"4x4 clue matches solution");
+                    if(!model.IsFixed[r,c])empty++;
+                }
+                Check(empty>0&&empty<=targets[level],"4x4 bounded removal target");
+                min=Math.Min(min,empty);max=Math.Max(max,empty);
+            }
+            Console.WriteLine($"PASS: 60 unique 4x4 puzzles level {level}, empty cells {min}–{max}, target {targets[level]}.");
+        }
+        Check(SudokuSolver.CountSolutions(new int[4,4])==2,"empty 4x4 has multiple solutions");
+        Check(SudokuSolver.CountSolutions(new int[4,9])==0,"reject nonsquare puzzle");
+        var m=Engine.StartNewGame(0,4);
+        m.CurrentBoard=(int[,])m.SolutionBoard.Clone();
+        for(int row=0;row<4;row++)for(int col=0;col<4;col++)m.IsFixed[row,col]=true;
+        m.CurrentBoard[0,0]=0;m.IsFixed[0,0]=false;
+        int answer=m.SolutionBoard[0,0],wrong=answer%4+1;
+        Check(!Engine.MakeMove(m,0,0,5)&&!Engine.ToggleNote(m,0,0,9)&&m.Mistakes==0&&m.UndoHistory.Count==0,"reject out-of-range mini input without penalties");
+        Engine.MakeMove(m,0,0,answer);Engine.MakeMove(m,0,0,answer);Check(m.Score==10&&m.UndoHistory.Count==1,"mini repeat no-op");
+        Engine.Erase(m,0,0);Engine.MakeMove(m,0,0,answer);Check(m.Score==10,"mini erase refill score");
+        Engine.MakeMove(m,0,0,wrong);Engine.Undo(m);Check(m.Score==10&&m.Mistakes==0,"mini undo restores score and mistakes");
+        Engine.Erase(m,0,0);Engine.GetHint(m,0,0);Engine.Undo(m);Engine.MakeMove(m,0,0,answer);Check(m.Score==5&&m.HintsLeft==2,"mini hint stays consumed and capped");
+        Check(Engine.TryFinish(m,true),"mini completes");int score=m.Score;
+        Engine.Erase(m,0,0);Check(!Engine.TryFinish(m,true)&&m.Score==score,"mini terminal locked once");
+    }
+
+    private static void WpfFlowTests()
+    {
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+        var store=new FakeStore();AuthService.Store=store;AuthService.Logout();AuthService.LoginAsGuest();
+        var window=new MainWindow();
+        var timer=(DispatcherTimer)Field(window,"_gameTimer")!;
+        var grid=(System.Windows.Controls.Primitives.UniformGrid)Field(window,"BoardGrid")!;
+        Check(((FrameworkElement)Field(window,"ModeSelectionView")!).Visibility==Visibility.Visible&&!timer.IsEnabled&&grid.Children.Count==0,"startup shows only mode selection without starting a game");
+        Call(window,"GameTimer_Tick",window,EventArgs.Empty);
+        Call(window,"ApplyNumberInput",1);Call(window,"BtnPause_Click",window,new RoutedEventArgs());
+        Check((int)Field(window,"_elapsedSeconds")! == 0,"game shortcuts and timer inactive on first step");
+        var snapshots=Environment.GetEnvironmentVariable("SUDOKU_PREVIEW_DIR");
+        if(snapshots!=null)RenderWindow(window,System.IO.Path.Combine(snapshots,"wpf-modes.png"));
+        ((Button)Field(window,"btnModeVariant")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(((FrameworkElement)Field(window,"SetupView")!).Visibility==Visibility.Visible&&!((Button)Field(window,"btnStartGame")!).IsEnabled,"variant setup requires choosing variant");
+        ((Button)Field(window,"btnDiffHard")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check((int)Field(window,"_pendingDifficulty")! == 2&&!timer.IsEnabled&&grid.Children.Count==0,"difficulty alone does not create or time a puzzle");
+        ((Button)Field(window,"btnVariant4x4")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(((Button)Field(window,"btnStartGame")!).IsEnabled,"selecting 4x4 enables start");
+        if(snapshots!=null)RenderWindow(window,System.IO.Path.Combine(snapshots,"wpf-setup.png"));
+        ((Button)Field(window,"btnStartGame")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);CheckReset(window);
+        var model=(SudokuModel)Field(window,"_currentModel")!;
+        Check(model.Size==4&&grid.Rows==4&&grid.Columns==4&&grid.Children.Count==16,"4x4 renders exactly sixteen cells");
+        Check(((System.Windows.Controls.Primitives.UniformGrid)Field(window,"BlockLines")!).Children.Count==4,"mini has four 2x2 block outlines");
+        var pad=(System.Windows.Controls.Primitives.UniformGrid)Field(window,"NumberPad")!;
+        Check(pad.Rows==1&&pad.Columns==4&&pad.Children.Count==4,"mini keypad only 1 through 4");
+        Check(((TextBlock)Field(window,"txtDifficultyBadge")!).Text=="Khó"&&((System.Windows.Controls.ProgressBar)Field(window,"GameProgress")!).Maximum==16,"difficulty and progress correspond to selected variant");
+        int r=(int)Field(window,"_selectedRow")!,c=(int)Field(window,"_selectedCol")!;
+        Call(window,"ApplyNumberInput",9);Check(model.CurrentBoard[r,c]==0&&model.Mistakes==0,"UI rejects 5-9 in mini without error cost");
+        ((Button)pad.Children[model.SolutionBoard[r,c]-1]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(model.Score==10,"real WPF keypad routes mini input");
+        ((Button)Field(window,"btnUndo")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Check(model.Score==0,"real WPF mini undo");
+        Call(window,"BtnPencil_Click",window,new RoutedEventArgs());Call(window,"ApplyNumberInput",2);
+        Check(model.Notes[r,c].Contains(2)&&((Button[,])Field(window,"_cells")!)[r,c].Content is System.Windows.Controls.Primitives.UniformGrid noteGrid&&noteGrid.Children.Count==4,"mini notes use four positions");
+        Call(window,"BtnPencil_Click",window,new RoutedEventArgs());
+        if(snapshots!=null)RenderWindow(window,System.IO.Path.Combine(snapshots,"wpf-game4x4.png"));
+        ((Button)Field(window,"btnPause")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!timer.IsEnabled&&((FrameworkElement)Field(window,"PauseOverlay")!).Visibility==Visibility.Visible&&grid.Visibility==Visibility.Hidden,"mini pause hides clues and stops clock");
+        ((Button)Field(window,"btnNewGame")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);CheckReset(window);
+        Check(((FrameworkElement)Field(window,"PauseOverlay")!).Visibility==Visibility.Collapsed,"new game clears pause overlay");
+        model=(SudokuModel)Field(window,"_currentModel")!;
+        string outcome="";Set(window,"_showOutcome",new Action<string,string,bool>((m,_,_)=>outcome=m));
+        for(int row=0;row<4;row++)for(int col=0;col<4;col++)if(!model.IsFixed[row,col])
+        {Set(window,"_selectedRow",row);Set(window,"_selectedCol",col);Call(window,"ApplyNumberInput",model.SolutionBoard[row,col]);}
+        PumpUntil(()=>model.SaveState==ResultSaveState.Saved);
+        Check(model.State==GameState.Won&&!timer.IsEnabled&&AuthService.GuestHistory.Count==1&&AuthService.GuestHistory[0].Difficulty=="4×4 · Khó","4x4 win saves once with distinct variant label");
+        Call(window,"HandleGameWon");Call(window,"ApplyNumberInput",1);Check(AuthService.GuestHistory.Count==1,"repeated mini finish cannot duplicate save");
+        ((Button)Field(window,"btnNewGame")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);
+        model=(SudokuModel)Field(window,"_currentModel")!;
+        r=(int)Field(window,"_selectedRow")!;c=(int)Field(window,"_selectedCol")!;
+        int wrong=model.SolutionBoard[r,c]%4+1;
+        for(int error=0;error<3;error++){Call(window,"BtnErase_Click",window,new RoutedEventArgs());Call(window,"ApplyNumberInput",wrong);}
+        PumpUntil(()=>model.SaveState==ResultSaveState.Saved);
+        Check(model.State==GameState.Lost&&model.Mistakes==3&&!timer.IsEnabled&&AuthService.GuestHistory.Count==2&&!AuthService.GuestHistory.Single(h=>h.GameId==model.GameId).IsWin,"mini three errors lose and save exactly once");
+        Call(window,"BtnUndo_Click",window,new RoutedEventArgs());Call(window,"BtnPause_Click",window,new RoutedEventArgs());
+        Check(model.State==GameState.Lost&&model.Mistakes==3,"mini loss cannot undo or resume");
+        ((Button)Field(window,"btnChangeSetup")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(((FrameworkElement)Field(window,"SetupView")!).Visibility==Visibility.Visible&&!timer.IsEnabled,"back from game opens setup without starting");
+        ((Button)Field(window,"btnHome")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)Field(window,"btnModePvp")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(!((Button)Field(window,"btnStartGame")!).IsEnabled&&((FrameworkElement)Field(window,"txtPvpNotice")!).Visibility==Visibility.Visible,"PvP is a disabled coming-soon option");
+        Call(window,"StartSelectedGame_Click",window,new RoutedEventArgs());Check(!timer.IsEnabled,"PvP cannot launch mini or normal game");
+        ((Button)Field(window,"btnHome")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ((Button)Field(window,"btnModeNormal")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(((FrameworkElement)Field(window,"VariantOptions")!).Visibility==Visibility.Collapsed&&((Button)Field(window,"btnStartGame")!).IsEnabled,"normal setup reuses existing mode without extra variant");
+        ((Button)Field(window,"btnStartGame")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(()=>!(bool)Field(window,"_isGenerating")!);
+        Check(((SudokuModel)Field(window,"_currentModel")!).Size==9&&grid.Children.Count==81&&pad.Children.Count==9,"existing normal board and keypad preserved after mode switch");
+        Call(window,"StartGame",3);Call(window,"ShowModeSelection");
+        var wait=Stopwatch.StartNew();PumpUntil(()=>wait.ElapsedMilliseconds>300);
+        Check(((FrameworkElement)Field(window,"ModeSelectionView")!).Visibility==Visibility.Visible&&!timer.IsEnabled,"late generation cannot reopen game after navigation");
+        window.Close();
+        Console.WriteLine("PASS: WPF mode/setup/start flow, 4x4 board/keypad/notes, pause/new game, variant history, PvP placeholder, existing normal mode and navigation race.");
+    }
+
+    private static void RenderWindow(MainWindow window,string path)
+    {
+        var root=(FrameworkElement)window.Content;
+        root.Measure(new Size(1080,780));root.Arrange(new Rect(0,0,1080,780));root.UpdateLayout();
+        var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap(1080,780,96,96,System.Windows.Media.PixelFormats.Pbgra32);
+        var background=new System.Windows.Media.DrawingVisual();
+        using(var drawing=background.RenderOpen())drawing.DrawRectangle(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(18,18,18)),null,new Rect(0,0,1080,780));
+        bitmap.Render(background);bitmap.Render(root);
+        var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+        using var output=System.IO.File.Create(path);encoder.Save(output);
+    }
+
     private static void CheckReset(MainWindow window)
     {
         var m=(SudokuModel)Field(window,"_currentModel")!;
