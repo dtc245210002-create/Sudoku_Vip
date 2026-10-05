@@ -4,15 +4,18 @@ namespace sudokuvip;
 
 public class SudokuEngine
 {
-    public SudokuModel StartNewGame(int difficultyLevel)
+    public SudokuModel StartNewGame(int difficultyLevel, int size = 9)
     {
-        int target = difficultyLevel switch { 0 => 32, 1 => 42, 2 => 50, 3 => 56, _ => 36 };
+        if (size is not (4 or 9)) throw new ArgumentOutOfRangeException(nameof(size));
+        int target = size == 4
+            ? difficultyLevel switch { 0 => 6, 1 => 8, 2 => 10, 3 => 12, _ => 6 }
+            : difficultyLevel switch { 0 => 32, 1 => 42, 2 => 50, 3 => 56, _ => 36 };
         SudokuModel? best = null;
         int bestRemoved = -1;
         var clock = Stopwatch.StartNew();
         for (int attempt = 0; attempt < 8; attempt++)
         {
-            var m = new SudokuModel();
+            var m = new SudokuModel(size);
             GenerateRandomBoard(m);
             int removed = RemoveCells(m, target, clock);
             if (removed > bestRemoved) { best = m; bestRemoved = removed; }
@@ -25,13 +28,14 @@ public class SudokuEngine
     private static void GenerateRandomBoard(SudokuModel m)
     {
         int[] Shuffle(IEnumerable<int> xs) => xs.OrderBy(_ => Random.Shared.Next()).ToArray();
-        var digits = Shuffle(Enumerable.Range(1,9));
-        var rows = Shuffle(Enumerable.Range(0,3)).SelectMany(b => Shuffle(Enumerable.Range(0,3)).Select(r => b*3+r)).ToArray();
-        var cols = Shuffle(Enumerable.Range(0,3)).SelectMany(b => Shuffle(Enumerable.Range(0,3)).Select(c => b*3+c)).ToArray();
-        for (int r = 0; r < 9; r++)
-            for (int c = 0; c < 9; c++)
+        int size = m.Size, box = m.BoxSize;
+        var digits = Shuffle(Enumerable.Range(1,size));
+        var rows = Shuffle(Enumerable.Range(0,box)).SelectMany(b => Shuffle(Enumerable.Range(0,box)).Select(r => b*box+r)).ToArray();
+        var cols = Shuffle(Enumerable.Range(0,box)).SelectMany(b => Shuffle(Enumerable.Range(0,box)).Select(c => b*box+c)).ToArray();
+        for (int r = 0; r < size; r++)
+            for (int c = 0; c < size; c++)
             {
-                int v = digits[(rows[r]*3+rows[r]/3+cols[c])%9];
+                int v = digits[(rows[r]*box+rows[r]/box+cols[c])%size];
                 m.CurrentBoard[r,c] = m.SolutionBoard[r,c] = v; m.IsFixed[r,c] = true;
             }
     }
@@ -39,10 +43,10 @@ public class SudokuEngine
     private static int RemoveCells(SudokuModel m, int target, Stopwatch clock)
     {
         int removed = 0;
-        foreach (int i in Enumerable.Range(0,81).OrderBy(_ => Random.Shared.Next()))
+        foreach (int i in Enumerable.Range(0,m.Size*m.Size).OrderBy(_ => Random.Shared.Next()))
         {
             if (removed >= target || clock.ElapsedMilliseconds >= 2000) break;
-            int r = i/9, c = i%9, old = m.CurrentBoard[r,c];
+            int r = i/m.Size, c = i%m.Size, old = m.CurrentBoard[r,c];
             m.CurrentBoard[r,c] = 0;
             if (SudokuSolver.CountSolutions(m.CurrentBoard, 50000) == 1)
             { m.IsFixed[r,c] = false; removed++; }
@@ -52,13 +56,13 @@ public class SudokuEngine
     }
 
     private static bool CanEdit(SudokuModel m, int r, int c) =>
-        m.State == GameState.Playing && r >= 0 && r < 9 && c >= 0 && c < 9 && !m.IsFixed[r,c];
+        m.State == GameState.Playing && r >= 0 && r < m.Size && c >= 0 && c < m.Size && !m.IsFixed[r,c];
     private static void Snapshot(SudokuModel m, int r, int c) =>
         m.UndoHistory.Push(new(r,c,m.CurrentBoard[r,c],new(m.Notes[r,c]),m.Mistakes));
 
     public bool MakeMove(SudokuModel m, int r, int c, int value)
     {
-        if (!CanEdit(m,r,c) || value < 1 || value > 9) return false;
+        if (!CanEdit(m,r,c) || value < 1 || value > m.Size) return false;
         if (m.CurrentBoard[r,c] == value) return value == m.SolutionBoard[r,c];
         Snapshot(m,r,c);
         m.CurrentBoard[r,c] = value; m.Notes[r,c].Clear();
@@ -73,7 +77,7 @@ public class SudokuEngine
     }
     public bool ToggleNote(SudokuModel m, int r, int c, int value)
     {
-        if (!CanEdit(m,r,c) || m.CurrentBoard[r,c] != 0 || value < 1 || value > 9) return false;
+        if (!CanEdit(m,r,c) || m.CurrentBoard[r,c] != 0 || value < 1 || value > m.Size) return false;
         Snapshot(m,r,c);
         if (!m.Notes[r,c].Remove(value)) m.Notes[r,c].Add(value);
         return true;
@@ -96,8 +100,8 @@ public class SudokuEngine
     }
     public bool IsGameWon(SudokuModel m)
     {
-        for (int r = 0; r < 9; r++)
-            for (int c = 0; c < 9; c++)
+        for (int r = 0; r < m.Size; r++)
+            for (int c = 0; c < m.Size; c++)
                 if (m.CurrentBoard[r,c] == 0 || m.CurrentBoard[r,c] != m.SolutionBoard[r,c]) return false;
         return SudokuSolver.CountSolutions(m.CurrentBoard) == 1;
     }

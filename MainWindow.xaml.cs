@@ -16,14 +16,14 @@ namespace sudokuvip
     {
         private readonly SudokuEngine _engine = new SudokuEngine();
         private SudokuModel _currentModel = new SudokuModel();
-        private readonly Button[,] _cells = new Button[9, 9];
+        private Button[,] _cells = new Button[0, 0];
         private UserAccount? _gamePlayer;
         private bool _isGenerating;
         private int _generationVersion;
         private bool _closed;
         private Action<string,string,bool> _showOutcome = (message,title,won) => MessageBox.Show(message,title,
             MessageBoxButton.OK,won ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        private bool CanPlay => !_closed && !_isGenerating && _currentModel.State == GameState.Playing;
+        private bool CanPlay => !_closed && !_isGenerating && GameView.Visibility == Visibility.Visible && _currentModel.State == GameState.Playing;
 
         private int _selectedRow = -1;
         private int _selectedCol = -1;
@@ -48,8 +48,7 @@ namespace sudokuvip
             UpdateUserProfileUI();
             AuthService.CurrentUserChanged += UpdateUserProfileUI;
 
-            InitializeBoardUI();
-            StartGame(0);
+            ShowModeSelection();
         }
 
         private void GameTimer_Tick(object? sender, EventArgs e)
@@ -64,15 +63,40 @@ namespace sudokuvip
         private void InitializeBoardUI()
         {
             BoardGrid.Children.Clear();
-
-            for (int r = 0; r < 9; r++)
+            int size = _currentModel.Size;
+            _cells = new Button[size, size];
+            BoardGrid.Rows = BoardGrid.Columns = size;
+            BoardBorder.Width = BoardBorder.Height = size == 4 ? 480 : 550;
+            BlockLines.Children.Clear();
+            BlockLines.Rows = BlockLines.Columns = _currentModel.BoxSize;
+            for (int boxRow = 0; boxRow < _currentModel.BoxSize; boxRow++)
+                for (int boxCol = 0; boxCol < _currentModel.BoxSize; boxCol++)
+                    BlockLines.Children.Add(new Border
+                    {
+                        BorderBrush = BrushFrom("#596476"),
+                        BorderThickness = new Thickness(0, 0,
+                            boxCol < _currentModel.BoxSize - 1 ? 2.5 : 0,
+                            boxRow < _currentModel.BoxSize - 1 ? 2.5 : 0)
+                    });
+            NumberPad.Children.Clear();
+            NumberPad.Rows = size == 4 ? 1 : 3;
+            NumberPad.Columns = size == 4 ? 4 : 3;
+            for (int value = 1; value <= size; value++)
             {
-                for (int c = 0; c < 9; c++)
+                var key = new Button { Content = value.ToString(), Style = (Style)FindResource("NumPadBtnStyle") };
+                key.Click += Number_Click;
+                NumberPad.Children.Add(key);
+            }
+
+            for (int r = 0; r < _currentModel.Size; r++)
+            {
+                for (int c = 0; c < _currentModel.Size; c++)
                 {
                     Button btn = new Button
                     {
                         Name = $"cell_{r}_{c}",
-                        FontSize = 24,
+                        FontSize = size == 4 ? 38 : 24,
+                        Style = (Style)FindResource("CellBtnStyle"),
                         FontWeight = FontWeights.Bold,
                         Background = Brushes.White,
                         BorderBrush = new SolidColorBrush(Color.FromRgb(180, 190, 205)),
@@ -90,26 +114,52 @@ namespace sudokuvip
 
         private Thickness GetBorderThickness(int row, int col)
         {
-            double left = (col % 3 == 0 && col != 0) ? 2.5 : 0.5;
-            double top = (row % 3 == 0 && row != 0) ? 2.5 : 0.5;
-            double right = (col == 8) ? 0 : 0.5;
-            double bottom = (row == 8) ? 0 : 0.5;
+            double left = (col % _currentModel.BoxSize == 0 && col != 0) ? 2.5 : 0.5;
+            double top = (row % _currentModel.BoxSize == 0 && row != 0) ? 2.5 : 0.5;
+            double right = (col == _currentModel.Size - 1) ? 0 : 0.5;
+            double bottom = (row == _currentModel.Size - 1) ? 0 : 0.5;
             return new Thickness(left, top, right, bottom);
         }
 
         private async void StartGame(int difficulty)
         {
+            if (_closed || _currentMode == GameMode.PvP || _currentModel.SaveState == ResultSaveState.Saving) return;
             _currentDifficulty = difficulty;
+            _pendingDifficulty = difficulty;
+            int size = _currentMode == GameMode.Variant ? 4 : 9;
+            ModeSelectionView.Visibility = SetupView.Visibility = Visibility.Collapsed;
+            GameView.Visibility = Visibility.Visible;
+            PauseOverlay.Visibility = Visibility.Collapsed;
+            GenerationOverlay.Visibility = Visibility.Visible;
+            BoardBorder.Width = BoardBorder.Height = size == 4 ? 480 : 550;
+            UpdateGameLabels(size);
             int version = ++_generationVersion;
             _isGenerating = true;
             _gameTimer.Stop();
             var player = AuthService.CurrentUser;
             UpdateControlState();
-            var model = await System.Threading.Tasks.Task.Run(() => _engine.StartNewGame(difficulty));
+            SudokuModel model;
+            try
+            {
+                model = await System.Threading.Tasks.Task.Run(() => _engine.StartNewGame(difficulty, size));
+            }
+            catch (Exception)
+            {
+                if (!_closed && version == _generationVersion)
+                {
+                    _isGenerating = false;
+                    ShowModeSelection();
+                    _showOutcome("Không tạo được ván mới. Vui lòng chọn lại chế độ.", "Sudoku VIP", false);
+                }
+                return;
+            }
             if (_closed || version != _generationVersion) return;
             _currentModel = model;
+            InitializeBoardUI();
+            UpdateGameLabels();
             _gamePlayer = player;
             _isGenerating = false;
+            GenerationOverlay.Visibility = Visibility.Collapsed;
             _selectedRow = -1;
             _selectedCol = -1;
 
@@ -131,24 +181,25 @@ namespace sudokuvip
 
         private void SelectFirstEmptyCell()
         {
-            for (int r = 0; r < 9; r++)
+            for (int r = 0; r < _currentModel.Size; r++)
             {
-                for (int c = 0; c < 9; c++)
+                for (int c = 0; c < _currentModel.Size; c++)
                 {
                     if (!_currentModel.IsFixed[r, c] && _currentModel.CurrentBoard[r, c] == 0)
                     {
                         _selectedRow = r;
                         _selectedCol = c;
                         HighlightSelection();
+                        _cells[r,c].Focus();
                         return;
                     }
                 }
             }
 
             // Nếu không có ô trống nào giá trị 0, chọn ô không cố định đầu tiên
-            for (int r = 0; r < 9; r++)
+            for (int r = 0; r < _currentModel.Size; r++)
             {
-                for (int c = 0; c < 9; c++)
+                for (int c = 0; c < _currentModel.Size; c++)
                 {
                     if (!_currentModel.IsFixed[r, c])
                     {
@@ -163,17 +214,14 @@ namespace sudokuvip
 
         private void UpdateHeaderDifficultyButtons()
         {
-            btnDiffEasy.Foreground = _currentDifficulty == 0 ? new SolidColorBrush(Color.FromRgb(74, 144, 226)) : new SolidColorBrush(Color.FromRgb(160, 160, 160));
-            btnDiffEasy.FontWeight = _currentDifficulty == 0 ? FontWeights.Bold : FontWeights.Normal;
-
-            btnDiffMedium.Foreground = _currentDifficulty == 1 ? new SolidColorBrush(Color.FromRgb(74, 144, 226)) : new SolidColorBrush(Color.FromRgb(160, 160, 160));
-            btnDiffMedium.FontWeight = _currentDifficulty == 1 ? FontWeights.Bold : FontWeights.Normal;
-
-            btnDiffHard.Foreground = _currentDifficulty == 2 ? new SolidColorBrush(Color.FromRgb(74, 144, 226)) : new SolidColorBrush(Color.FromRgb(160, 160, 160));
-            btnDiffHard.FontWeight = _currentDifficulty == 2 ? FontWeights.Bold : FontWeights.Normal;
-
-            btnDiffExpert.Foreground = _currentDifficulty == 3 ? new SolidColorBrush(Color.FromRgb(74, 144, 226)) : new SolidColorBrush(Color.FromRgb(160, 160, 160));
-            btnDiffExpert.FontWeight = _currentDifficulty == 3 ? FontWeights.Bold : FontWeights.Normal;
+            foreach (Button button in new[] { btnDiffEasy, btnDiffMedium, btnDiffHard, btnDiffExpert })
+            {
+                bool selected = int.Parse(button.Tag.ToString()!) == _pendingDifficulty;
+                button.Foreground = BrushFrom(selected ? "#AAD0FF" : "#B1B1B8");
+                button.Background = BrushFrom(selected ? "#23314A" : "#232323");
+                button.BorderBrush = BrushFrom(selected ? "#5083CE" : "#343434");
+                System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "Đã chọn" : "Chưa chọn");
+            }
         }
 
         private void Cell_Click(object sender, RoutedEventArgs e)
@@ -197,9 +245,9 @@ namespace sudokuvip
 
             int targetVal = (_selectedRow >= 0 && _selectedCol >= 0) ? _currentModel.CurrentBoard[_selectedRow, _selectedCol] : 0;
 
-            for (int r = 0; r < 9; r++)
+            for (int r = 0; r < _currentModel.Size; r++)
             {
-                for (int c = 0; c < 9; c++)
+                for (int c = 0; c < _currentModel.Size; c++)
                 {
                     if (r == _selectedRow && c == _selectedCol)
                     {
@@ -210,7 +258,7 @@ namespace sudokuvip
                         _cells[r, c].Background = sameNumBg;
                     }
                     else if (_selectedRow >= 0 && _selectedCol >= 0 &&
-                             (r == _selectedRow || c == _selectedCol || (r / 3 == _selectedRow / 3 && c / 3 == _selectedCol / 3)))
+                             (r == _selectedRow || c == _selectedCol || (r / _currentModel.BoxSize == _selectedRow / _currentModel.BoxSize && c / _currentModel.BoxSize == _selectedCol / _currentModel.BoxSize)))
                     {
                         _cells[r, c].Background = relatedBg;
                     }
@@ -242,7 +290,7 @@ namespace sudokuvip
 
         private void ApplyNumberInput(int val)
         {
-            if (!CanPlay) return;
+            if (!CanPlay || val < 1 || val > _currentModel.Size) return;
             if (_selectedRow < 0 || _selectedCol < 0) SelectFirstEmptyCell();
             if (_selectedRow < 0 || _selectedCol < 0 || _currentModel.IsFixed[_selectedRow,_selectedCol]) return;
             if (_isPencilMode) _engine.ToggleNote(_currentModel,_selectedRow,_selectedCol,val);
@@ -258,6 +306,7 @@ namespace sudokuvip
             btnHint.Content = $"💡 {_currentModel.HintsLeft}";
             if (_selectedRow >= 0 && _selectedCol >= 0) RenderCellContent(_selectedRow,_selectedCol);
             HighlightSelection();
+            UpdateControlState();
         }
 
         private void BtnErase_Click(object sender, RoutedEventArgs e)
@@ -307,11 +356,7 @@ namespace sudokuvip
             int correctValue = _engine.GetHint(_currentModel, _selectedRow, _selectedCol);
             if (correctValue != -1)
             {
-                btnHint.Content = $"💡 {_currentModel.HintsLeft}";
-
-                UpdateUIAfterMove();
-                RenderCellContent(_selectedRow, _selectedCol);
-                HighlightSelection();
+                RefreshMove();
 
                 if (_engine.IsGameWon(_currentModel))
                 {
@@ -322,23 +367,33 @@ namespace sudokuvip
 
         private void BtnPause_Click(object sender, RoutedEventArgs e)
         {
-            if (_isGenerating || _currentModel.State is GameState.Won or GameState.Lost) return;
+            if (GameView.Visibility != Visibility.Visible || _closed || _isGenerating || _currentModel.State is GameState.Won or GameState.Lost) return;
             _engine.TogglePause(_currentModel);
             bool paused = _currentModel.State == GameState.Paused;
             if (paused) _gameTimer.Stop(); else _gameTimer.Start();
             btnPause.Content = paused ? "▶" : "⏸";
             BoardGrid.Visibility = paused ? Visibility.Hidden : Visibility.Visible;
+            PauseOverlay.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
             UpdateControlState();
+            if (paused) btnResumeGame.Focus();
+            else if (_selectedRow >= 0 && _selectedCol >= 0) _cells[_selectedRow,_selectedCol].Focus();
         }
 
         private void UpdateControlState()
         {
-            BoardGrid.IsEnabled = CanPlay;
-            btnHint.IsEnabled = btnPencil.IsEnabled = btnUndo.IsEnabled = btnErase.IsEnabled = CanPlay;
-            btnPause.IsEnabled = !_isGenerating && _currentModel.State is GameState.Playing or GameState.Paused;
-            btnLogout.IsEnabled = btnSaveGuestScore.IsEnabled = !_isGenerating && _currentModel.SaveState != ResultSaveState.Saving;
-            btnNewGame.IsEnabled = btnDiffEasy.IsEnabled = btnDiffMedium.IsEnabled = btnDiffHard.IsEnabled = btnDiffExpert.IsEnabled =
-                !_isGenerating && _currentModel.SaveState != ResultSaveState.Saving;
+            bool saving = _currentModel.SaveState == ResultSaveState.Saving;
+            bool gameVisible = GameView.Visibility == Visibility.Visible;
+            BoardGrid.IsEnabled = NumberPad.IsEnabled = CanPlay;
+            btnPencil.IsEnabled = btnErase.IsEnabled = CanPlay;
+            btnUndo.IsEnabled = CanPlay && _currentModel.UndoHistory.Count > 0;
+            btnHint.IsEnabled = CanPlay && _currentModel.HintsLeft > 0;
+            btnPause.IsEnabled = gameVisible && !_isGenerating && _currentModel.State is GameState.Playing or GameState.Paused;
+            btnLogout.IsEnabled = btnSaveGuestScore.IsEnabled = !_isGenerating && !saving;
+            btnNewGame.IsEnabled = gameVisible && !_isGenerating && !saving;
+            btnDiffEasy.IsEnabled = btnDiffMedium.IsEnabled = btnDiffHard.IsEnabled = btnDiffExpert.IsEnabled = !_isGenerating && !saving;
+            btnHome.IsEnabled = btnChangeSetup.IsEnabled = btnModeNormal.IsEnabled = btnModeVariant.IsEnabled = btnModePvp.IsEnabled = !saving;
+            btnStartGame.IsEnabled = SetupView.Visibility == Visibility.Visible && !_isGenerating && !saving &&
+                (_currentMode == GameMode.Normal || _currentMode == GameMode.Variant && _variantSelected);
         }
 
         protected override void OnClosed(EventArgs e)
@@ -354,7 +409,9 @@ namespace sudokuvip
             if (sender is not Button btn || btn.Tag == null) return;
             if (int.TryParse(btn.Tag.ToString(), out int diff))
             {
-                StartGame(diff);
+                if (SetupView.Visibility != Visibility.Visible || diff < 0 || diff > 3) return;
+                _pendingDifficulty = diff;
+                UpdateHeaderDifficultyButtons();
             }
         }
 
@@ -365,9 +422,9 @@ namespace sudokuvip
 
         private void DrawBoard()
         {
-            for (int r = 0; r < 9; r++)
+            for (int r = 0; r < _currentModel.Size; r++)
             {
-                for (int c = 0; c < 9; c++)
+                for (int c = 0; c < _currentModel.Size; c++)
                 {
                     RenderCellContent(r, c);
                 }
@@ -386,7 +443,7 @@ namespace sudokuvip
                 TextBlock tb = new TextBlock
                 {
                     Text = val.ToString(),
-                    FontSize = 24,
+                    FontSize = _currentModel.Size == 4 ? 38 : 24,
                     FontWeight = _currentModel.IsFixed[r, c] ? FontWeights.Bold : FontWeights.SemiBold,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
@@ -404,13 +461,19 @@ namespace sudokuvip
             else if (notes.Count > 0)
             {
                 // Hiển thị bảng số ghi chú 3x3
-                UniformGrid noteGrid = new UniformGrid { Rows = 3, Columns = 3, Margin = new Thickness(2) };
-                for (int n = 1; n <= 9; n++)
+                UniformGrid noteGrid = new UniformGrid
+                {
+                    Rows = _currentModel.BoxSize, Columns = _currentModel.BoxSize,
+                    Width = _currentModel.Size == 4 ? 80 : 44,
+                    Height = _currentModel.Size == 4 ? 80 : 44,
+                    Margin = new Thickness(2)
+                };
+                for (int n = 1; n <= _currentModel.Size; n++)
                 {
                     TextBlock noteTb = new TextBlock
                     {
                         Text = notes.Contains(n) ? n.ToString() : "",
-                        FontSize = 9,
+                        FontSize = _currentModel.Size == 4 ? 17 : 9,
                         Foreground = new SolidColorBrush(Color.FromRgb(100, 116, 139)),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center
@@ -429,12 +492,30 @@ namespace sudokuvip
         {
             txtScore.Text = _currentModel.Score.ToString();
             txtStatusScore.Text = $"🏆 {_currentModel.Score}";
-            txtMistakes.Text = $"{_currentModel.Mistakes}/3";
+            txtMistakes.Text = $"{_currentModel.Mistakes} / 3";
+            txtMistakes.Foreground = _currentModel.Mistakes > 0 ? BrushFrom("#EF7777") : Brushes.White;
+            int correct = 0;
+            for (int r = 0; r < _currentModel.Size; r++)
+                for (int c = 0; c < _currentModel.Size; c++)
+                    if (_currentModel.CurrentBoard[r,c] != 0 && _currentModel.CurrentBoard[r,c] == _currentModel.SolutionBoard[r,c]) correct++;
+            int total = _currentModel.Size * _currentModel.Size;
+            txtProgress.Text = $"{correct} / {total} ô";
+            GameProgress.Maximum = total;
+            GameProgress.Value = correct;
         }
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Space) { e.Handled = true; BtnPause_Click(this, new RoutedEventArgs()); return; }
+            if (GameView.Visibility != Visibility.Visible) return;
+            var modifiers = Keyboard.Modifiers;
+            if ((modifiers & (ModifierKeys.Alt | ModifierKeys.Windows)) != 0 ||
+                (modifiers.HasFlag(ModifierKeys.Control) && e.Key != Key.Z)) return;
+            if (e.Key == Key.Space)
+            {
+                // Preserve native Space activation for setup, tools, and navigation buttons.
+                if (Keyboard.FocusedElement is Button focused && focused.Tag is not Point) return;
+                e.Handled = true; BtnPause_Click(this, new RoutedEventArgs()); return;
+            }
             if (!CanPlay) return;
 
             // Xử lý phím số 1-9 từ bàn phím chính và numpad
@@ -483,21 +564,13 @@ namespace sudokuvip
                 return;
             }
 
-            // Pause
-            if (e.Key == Key.Space)
-            {
-                e.Handled = true;
-                BtnPause_Click(this, new RoutedEventArgs());
-                return;
-            }
-
             // Di chuyển ô chọn bằng phím mũi tên
             if (_selectedRow != -1 && _selectedCol != -1)
             {
                 if (e.Key == Key.Up && _selectedRow > 0) { _selectedRow--; e.Handled = true; }
-                else if (e.Key == Key.Down && _selectedRow < 8) { _selectedRow++; e.Handled = true; }
+                else if (e.Key == Key.Down && _selectedRow < _currentModel.Size - 1) { _selectedRow++; e.Handled = true; }
                 else if (e.Key == Key.Left && _selectedCol > 0) { _selectedCol--; e.Handled = true; }
-                else if (e.Key == Key.Right && _selectedCol < 8) { _selectedCol++; e.Handled = true; }
+                else if (e.Key == Key.Right && _selectedCol < _currentModel.Size - 1) { _selectedCol++; e.Handled = true; }
 
                 if (e.Handled)
                 {
@@ -529,7 +602,7 @@ namespace sudokuvip
             _gameTimer.Stop();
             model.SaveState = ResultSaveState.Saving;
             UpdateControlState();
-            string difficulty = GetDifficultyName(_currentDifficulty);
+            string difficulty = model.Size == 4 ? $"4×4 · {GetDifficultyName(_currentDifficulty)}" : GetDifficultyName(_currentDifficulty);
             int duration = _elapsedSeconds;
             var player = _gamePlayer;
             bool saved = await AuthService.RecordGameResultAsync(player,model.GameId,difficulty,model.Score,duration,model.Mistakes,won);
@@ -597,7 +670,7 @@ namespace sudokuvip
             // Tự động chuyển sang tab đăng ký
             loginWin.ShowDialog();
             UpdateUserProfileUI();
-            if (!ReferenceEquals(_gamePlayer,AuthService.CurrentUser)) StartGame(_currentDifficulty);
+            if (!ReferenceEquals(_gamePlayer,AuthService.CurrentUser)) ShowModeSelection();
         }
 
         private void BtnHistory_Click(object sender, RoutedEventArgs e)
@@ -633,7 +706,7 @@ namespace sudokuvip
             }
 
             UpdateUserProfileUI();
-            StartGame(_currentDifficulty);
+            ShowModeSelection();
         }
 
         #endregion
