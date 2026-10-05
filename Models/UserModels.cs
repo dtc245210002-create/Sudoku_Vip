@@ -14,9 +14,13 @@ namespace sudokuvip.Models
         public int TotalScore { get; set; }
         public int TotalGames { get; set; }
         public int TotalWins { get; set; }
+        public int EloRating { get; set; } = 1200;
+        public int PvpGames { get; set; }
+        public int PvpWins { get; set; }
         public bool IsGuest { get; set; } = false;
 
         public double WinRate => TotalGames > 0 ? Math.Round((double)TotalWins / TotalGames * 100, 1) : 0;
+        public double PvpWinRate => PvpGames > 0 ? Math.Round((double)PvpWins / PvpGames * 100, 1) : 0;
     }
 
     public class GameHistoryRecord

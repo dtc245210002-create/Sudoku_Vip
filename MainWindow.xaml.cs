@@ -600,6 +600,16 @@ namespace sudokuvip
             if (!ReferenceEquals(_gamePlayer,AuthService.CurrentUser)) StartGame(_currentDifficulty);
         }
 
+        private void BtnPvp_Click(object sender, RoutedEventArgs e)
+        {
+            var pvpLobby = new Pvp.Views.PvpLobbyWindow
+            {
+                Owner = this
+            };
+            pvpLobby.ShowDialog();
+            UpdateUserProfileUI();
+        }
+
         private void BtnHistory_Click(object sender, RoutedEventArgs e)
         {
             var historyWin = new HistoryWindow

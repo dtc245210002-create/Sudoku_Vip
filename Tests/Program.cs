@@ -24,6 +24,7 @@ internal static class Program
         try
         {
             GameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests();
+            PvpTests();
             Console.WriteLine($"PASS: {_assertions} assertions; no real database accessed.");
             return 0;
         }
@@ -240,6 +241,36 @@ internal static class Program
             $"timer and pencil reset: seconds={Field(window,"_elapsedSeconds")}, pencil={Field(window,"_isPencilMode")}");
         Check(((System.Windows.Controls.Primitives.UniformGrid)Field(window,"BoardGrid")!).Visibility==Visibility.Visible,"new game board visible");
         Check((int)Field(window,"_selectedRow")! >= 0 && ((Button)Field(window,"btnPencil")!).Foreground!=System.Windows.Media.Brushes.White,"selection and pencil visual reset");
+    }
+    private static void PvpTests()
+    {
+        // 1. Elo calculation tests
+        var (p1D, p2D, p1New, p2New) = sudokuvip.Pvp.Engine.PvpEloCalculator.Calculate(1200, 1200, true);
+        Check(p1D == 16 && p2D == -16 && p1New == 1216 && p2New == 1184, "equal elo win/loss calculation");
+        var (draw1, draw2, _, _) = sudokuvip.Pvp.Engine.PvpEloCalculator.Calculate(1200, 1200, false, isDraw: true);
+        Check(draw1 == 0 && draw2 == 0, "equal elo draw calculation");
+
+        // 2. Board data serialization
+        var model = Engine.StartNewGame(0);
+        var board = sudokuvip.Pvp.Models.PvpBoardData.FromModel(model);
+        Check(board.TotalEmpty == 32 && board.Clues.Length == 81 && board.Solution.Length == 81, "pvp board data conversion");
+
+        // 3. Message serialization round-trip
+        var progressMsg = sudokuvip.Pvp.Network.PvpMessage.Create(sudokuvip.Pvp.Network.PvpMessageType.PlayerProgress, new sudokuvip.Pvp.Network.MsgProgressPayload
+        {
+            MatchId = "test1", CellIndex = 5, IsCorrect = true, Mistakes = 0, FilledCorrect = 1, TotalEmpty = 32, Score = 10
+        });
+        string json = progressMsg.ToJson();
+        var deserialized = sudokuvip.Pvp.Network.PvpMessage.FromJson(json);
+        Check(deserialized != null && deserialized.Type == sudokuvip.Pvp.Network.PvpMessageType.PlayerProgress, "message round trip type");
+        var payload = deserialized!.GetPayload<sudokuvip.Pvp.Network.MsgProgressPayload>();
+        Check(payload != null && payload.MatchId == "test1" && payload.CellIndex == 5 && payload.IsCorrect, "message round trip payload");
+
+        // 4. AI Bot initialization
+        var bot = new sudokuvip.Pvp.Engine.PvpAiBot(board, 0, 1200);
+        Check(bot.PlayerInfo != null && bot.PlayerInfo.IsBot && !string.IsNullOrEmpty(bot.PlayerInfo.DisplayName), "pvp ai bot profile generation");
+
+        Console.WriteLine("PASS: PvP Elo calculator, board serialization, network message schema, and AI bot engine.");
     }
 }
 

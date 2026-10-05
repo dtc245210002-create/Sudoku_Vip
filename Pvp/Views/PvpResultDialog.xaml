@@ -1,0 +1,121 @@
+<Window x:Class="sudokuvip.Pvp.Views.PvpResultDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Kết Quả Trận Đấu" Height="500" Width="650"
+        Background="#141414" WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="True" ResizeMode="NoResize"
+        BorderBrush="#333333" BorderThickness="2">
+
+    <Window.Resources>
+        <Style x:Key="StatRowLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#9CA3AF"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="StatRowValue" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#F3F4F6"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="#161616" CornerRadius="12" Padding="25">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- 1. Tiêu đề Thắng / Thua -->
+            <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,0,0,15">
+                <TextBlock x:Name="txtTitle" Text="🎉 CHIẾN THẮNG!" FontSize="30" FontWeight="Bold" Foreground="#FBBF24" HorizontalAlignment="Center"/>
+                <TextBlock x:Name="txtReason" Text="Hoàn thành toàn bộ bàn cờ trước đối thủ!" FontSize="14" Foreground="#9CA3AF" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+            </StackPanel>
+
+            <!-- 2. Thẻ Thay Đổi Điểm Elo -->
+            <Border Grid.Row="1" Background="#1F1F1F" BorderBrush="#2D2D2D" BorderThickness="1" CornerRadius="8" Padding="15,10" Margin="0,0,0,20">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                        <TextBlock x:Name="txtP1Name" Text="Bạn" Foreground="#60A5FA" FontWeight="Bold" FontSize="14" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="txtP1EloChange" Text="+25 Elo (1275)" Foreground="#34D399" FontWeight="Bold" FontSize="15" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Column="1" Text="VS" Foreground="#6B7280" FontWeight="Bold" FontSize="14" VerticalAlignment="Center"/>
+
+                    <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                        <TextBlock x:Name="txtP2Name" Text="Đối thủ" Foreground="#F87171" FontWeight="Bold" FontSize="14" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="txtP2EloChange" Text="-22 Elo (1258)" Foreground="#F87171" FontWeight="Bold" FontSize="15" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- 3. Bảng So Sánh Chỉ Số Đối Đầu -->
+            <Border Grid.Row="2" Background="#1A1A1A" BorderBrush="#262626" BorderThickness="1" CornerRadius="8" Padding="15">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="3*"/>
+                        <ColumnDefinition Width="2*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Header bảng -->
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Bạn" Foreground="#60A5FA" FontWeight="Bold" FontSize="13" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Chỉ số" Foreground="#9CA3AF" FontWeight="Bold" FontSize="13" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Đối thủ" Foreground="#F87171" FontWeight="Bold" FontSize="13" HorizontalAlignment="Center"/>
+
+                    <Separator Grid.Row="0" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Background="#333333" Margin="0,20,0,8"/>
+
+                    <!-- Hàng 1: Tiến độ hoàn thành -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" x:Name="txtP1Progress" Text="50 / 50 (100%)" Style="{StaticResource StatRowValue}"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="Ô đã giải" Style="{StaticResource StatRowLabel}" HorizontalAlignment="Center" Margin="0,6"/>
+                    <TextBlock Grid.Row="1" Grid.Column="2" x:Name="txtP2Progress" Text="42 / 50 (84%)" Style="{StaticResource StatRowValue}"/>
+
+                    <!-- Hàng 2: Số lỗi mắc phải -->
+                    <TextBlock Grid.Row="2" Grid.Column="0" x:Name="txtP1Mistakes" Text="1 / 3" Style="{StaticResource StatRowValue}"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="Số lỗi (Mistakes)" Style="{StaticResource StatRowLabel}" HorizontalAlignment="Center" Margin="0,6"/>
+                    <TextBlock Grid.Row="2" Grid.Column="2" x:Name="txtP2Mistakes" Text="3 / 3" Style="{StaticResource StatRowValue}"/>
+
+                    <!-- Hàng 3: Thời gian thi đấu -->
+                    <TextBlock Grid.Row="3" Grid.Column="0" x:Name="txtP1Duration" Text="02:35" Style="{StaticResource StatRowValue}"/>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="Thời gian" Style="{StaticResource StatRowLabel}" HorizontalAlignment="Center" Margin="0,6"/>
+                    <TextBlock Grid.Row="3" Grid.Column="2" x:Name="txtP2Duration" Text="02:35" Style="{StaticResource StatRowValue}"/>
+
+                    <!-- Hàng 4: Điểm ván đấu -->
+                    <TextBlock Grid.Row="4" Grid.Column="0" x:Name="txtP1Score" Text="500" Style="{StaticResource StatRowValue}"/>
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Điểm ván" Style="{StaticResource StatRowLabel}" HorizontalAlignment="Center" Margin="0,6"/>
+                    <TextBlock Grid.Row="4" Grid.Column="2" x:Name="txtP2Score" Text="420" Style="{StaticResource StatRowValue}"/>
+                </Grid>
+            </Border>
+
+            <!-- 4. Nút Hành Động -->
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
+                <Button x:Name="btnClose" Content="Quay lại sảnh" Width="180" Height="42" Background="#3B82F6" Foreground="#FFFFFF" FontWeight="Bold" FontSize="14" Cursor="Hand" Click="BtnClose_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
