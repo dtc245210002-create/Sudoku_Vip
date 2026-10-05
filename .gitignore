@@ -3,3 +3,4 @@
 bin/
 obj/
 /Sudoku_Vip/
+*.csproj.user
