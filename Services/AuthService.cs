@@ -1,449 +1,149 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
-using Microsoft.Data.SqlClient;
-using sudokuvip.Database;
 using sudokuvip.Models;
 
-namespace sudokuvip.Services
+namespace sudokuvip.Services;
+
+public enum UsernameStatus { Available, Exists, Error, Invalid }
+
+public static class AuthService
 {
-    public static class AuthService
+    public static UserAccount? CurrentUser { get; private set; }
+    public static event Action? CurrentUserChanged;
+    public static IAccountStore Store { get; set; } = new SqlAccountStore();
+    private static readonly SemaphoreSlim Operations = new(1,1);
+    private static readonly Dictionary<Guid,List<GameHistoryRecord>> GuestSessions = new();
+    private static readonly HashSet<Guid> MigratedSessions = new();
+    public static IReadOnlyList<GameHistoryRecord> GuestHistory => CurrentUser?.IsGuest == true
+        ? HistoryFor(CurrentUser).AsReadOnly() : Array.Empty<GameHistoryRecord>();
+    private static List<GameHistoryRecord> HistoryFor(UserAccount user)
     {
-        public static UserAccount? CurrentUser { get; private set; }
-        public static event Action? CurrentUserChanged;
+        if (!GuestSessions.TryGetValue(user.SessionId,out var history)) GuestSessions[user.SessionId] = history = new();
+        return history;
+    }
+    private static void Notify(UserAccount user)
+    {
+        if (ReferenceEquals(CurrentUser,user)) CurrentUserChanged?.Invoke();
+    }
+    public static bool ValidUsername(string name) => name.Length is >= 3 and <= 50 && name.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
+    public static async Task<UsernameStatus> CheckUsernameExistsAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (!ValidUsername(name.Trim())) return UsernameStatus.Invalid;
+        try { return await Store.UsernameExistsAsync(name.Trim(),cancellationToken) ? UsernameStatus.Exists : UsernameStatus.Available; }
+        catch (OperationCanceledException) { throw; }
+        catch { return UsernameStatus.Error; }
+    }
 
-        // Lưu trữ lịch sử tạm thời cho khách trong phiên chơi hiện tại
-        public static List<GameHistoryRecord> GuestHistory { get; } = new List<GameHistoryRecord>();
-
-        public static string HashPassword(string password)
+    public static async Task<(bool Success,string Message,UserAccount? User)> RegisterAsync(
+        string username,string password,string displayName,string avatar = "👤",bool migrateGuestData = false)
+    {
+        username = username.Trim(); displayName = displayName.Trim();
+        if (!ValidUsername(username)) return (false,"Tên đăng nhập cần 3–50 ký tự, chỉ dùng chữ, số hoặc _.",null);
+        if (password.Length is < 8 or > 128 || !password.Any(char.IsLetter) || !password.Any(ch => !char.IsLetter(ch)))
+            return (false,"Mật khẩu mới cần 8–128 ký tự, gồm chữ và ít nhất một số hoặc ký tự khác.",null);
+        if (displayName.Length == 0) displayName = username;
+        if (string.IsNullOrWhiteSpace(avatar)) avatar = "👤";
+        if (displayName.Length > 100 || avatar.Length > 20) return (false,"Tên hiển thị tối đa 100 ký tự; ảnh đại diện tối đa 20 ký tự.",null);
+        var guest = migrateGuestData && CurrentUser?.IsGuest == true ? CurrentUser : null;
+        await Operations.WaitAsync();
+        try
         {
-            using var sha256 = SHA256.Create();
-            byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
-            var builder = new StringBuilder();
-            foreach (byte b in bytes)
+            var history = guest != null && !MigratedSessions.Contains(guest.SessionId) ? HistoryFor(guest).ToList() : new List<GameHistoryRecord>();
+            string hash = await Task.Run(() => PasswordHasher.Hash(password));
+            var user = await Store.RegisterAsync(username,hash,displayName,avatar,history);
+            // Store returns only after commit; never clear guest data on a failure.
+            if (guest != null)
             {
-                builder.Append(b.ToString("x2"));
+                HistoryFor(guest).Clear(); ApplyStatistics(guest,Array.Empty<GameHistoryRecord>());
+                MigratedSessions.Add(guest.SessionId);
             }
-            return builder.ToString();
+            CurrentUser = user; CurrentUserChanged?.Invoke();
+            return (true,"Tạo tài khoản mới thành công!",user);
         }
+        catch (DuplicateUsernameException) { return (false,"Tên đăng nhập đã được sử dụng.",null); }
+        catch { return (false,"Không thể tạo tài khoản hoặc chuyển lịch sử. Dữ liệu Khách được giữ nguyên; kiểm tra cấu hình SQL Server và thử lại.",null); }
+        finally { Operations.Release(); }
+    }
 
-        public static bool CheckUsernameExists(string username)
+    public static async Task<(bool Success,string Message,UserAccount? User)> LoginAsync(string username,string password)
+    {
+        username = username.Trim();
+        if (username.Length is < 1 or > 50 || password.Length == 0)
+            return (false,"Vui lòng nhập tên đăng nhập (tối đa 50 ký tự) và mật khẩu.",null);
+        await Operations.WaitAsync();
+        try
         {
-            if (string.IsNullOrWhiteSpace(username)) return false;
-            try
+            var account = await Store.FindAccountAsync(username);
+            if (account == null) return (false,"Sai tên đăng nhập hoặc mật khẩu!",null);
+            var (user,stored) = account.Value;
+            var verification = await Task.Run(() => { bool ok = PasswordHasher.Verify(password,stored,out bool upgrade); return (ok,upgrade); });
+            if (!verification.ok) return (false,"Sai tên đăng nhập hoặc mật khẩu!",null);
+            if (verification.upgrade)
             {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-                string sql = "SELECT COUNT(1) FROM Users WHERE LOWER(Username) = LOWER(@Username)";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Username", username.Trim());
-                return (int)cmd.ExecuteScalar()! > 0;
+                string hash = await Task.Run(() => PasswordHasher.Hash(password));
+                await Store.UpgradePasswordAsync(user.UserId,stored,hash);
             }
-            catch
-            {
-                return false;
-            }
+            CurrentUser = user; CurrentUserChanged?.Invoke();
+            return (true,"Đăng nhập thành công!",user);
         }
+        catch { return (false,"Không thể đăng nhập. Kiểm tra kết nối hoặc cấu hình SQL Server rồi thử lại.",null); }
+        finally { Operations.Release(); }
+    }
 
-        public static (bool Success, string Message, UserAccount? User) Register(
-            string username, 
-            string password, 
-            string displayName, 
-            string avatar = "👤",
-            bool migrateGuestData = false)
+    public static void LoginAsGuest(string? customNickname = null,string? customAvatar = null)
+    {
+        string name = string.IsNullOrWhiteSpace(customNickname) ? GenerateGuestName() : customNickname.Trim();
+        string avatar = string.IsNullOrWhiteSpace(customAvatar) ? "👤" : customAvatar;
+        if (CurrentUser?.IsGuest != true) CurrentUser = new() { IsGuest = true,Username = "guest",CreatedAt = DateTime.Now };
+        CurrentUser.DisplayName = name; CurrentUser.Avatar = avatar;
+        ApplyStatistics(CurrentUser,HistoryFor(CurrentUser));
+        CurrentUserChanged?.Invoke();
+    }
+    public static string GenerateGuestName() => $"Khách #{Random.Shared.Next(100,1000)}";
+    // Logout ends the session. Pending work keeps its captured owner; next Guest login starts fresh.
+    public static void Logout() { CurrentUser = null; CurrentUserChanged?.Invoke(); }
+
+    public static async Task<bool> RecordGameResultAsync(UserAccount? player,Guid gameId,string difficulty,int score,int durationSeconds,int mistakes,bool isWin)
+    {
+        if (player == null) return false;
+        int userId = player.UserId;
+        var record = new GameHistoryRecord { GameId = gameId,UserId = userId,Difficulty = difficulty,Score = score,DurationSeconds = durationSeconds,Mistakes = mistakes,IsWin = isWin,PlayedAt = DateTime.Now };
+        await Operations.WaitAsync();
+        try
         {
-            username = username.Trim();
-            displayName = displayName.Trim();
-            if (string.IsNullOrWhiteSpace(avatar)) avatar = "👤";
-
-            if (string.IsNullOrWhiteSpace(username) || username.Length < 3)
-                return (false, "Tên đăng nhập phải có ít nhất 3 ký tự.", null);
-
-            if (username.Any(ch => !char.IsLetterOrDigit(ch) && ch != '_'))
-                return (false, "Tên đăng nhập chỉ gồm chữ cái, số và dấu gạch dưới (_).", null);
-
-            if (string.IsNullOrWhiteSpace(password) || password.Length < 4)
-                return (false, "Mật khẩu phải có ít nhất 4 ký tự.", null);
-
-            if (string.IsNullOrWhiteSpace(displayName))
-                displayName = username;
-
-            try
+            if (player.IsGuest)
             {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-
-                // Kiểm tra username trùng lặp
-                string checkSql = "SELECT COUNT(1) FROM Users WHERE LOWER(Username) = LOWER(@Username)";
-                using (var checkCmd = new SqlCommand(checkSql, conn))
-                {
-                    checkCmd.Parameters.AddWithValue("@Username", username);
-                    int count = (int)checkCmd.ExecuteScalar()!;
-                    if (count > 0)
-                    {
-                        return (false, "Tên tài khoản này đã được sử dụng. Vui lòng chọn tên khác.", null);
-                    }
-                }
-
-                // Tính toán số liệu khởi tạo (nếu chuyển đổi từ khách)
-                int initialHighScore = 0;
-                int initialTotalScore = 0;
-                int initialTotalGames = 0;
-                int initialTotalWins = 0;
-
-                if (migrateGuestData && CurrentUser != null && CurrentUser.IsGuest)
-                {
-                    initialHighScore = CurrentUser.HighScore;
-                    initialTotalScore = CurrentUser.TotalScore;
-                    initialTotalGames = CurrentUser.TotalGames;
-                    initialTotalWins = CurrentUser.TotalWins;
-                }
-
-                string hash = HashPassword(password);
-                string insertSql = @"
-                    INSERT INTO Users (Username, PasswordHash, DisplayName, Avatar, CreatedAt, HighScore, TotalScore, TotalGames, TotalWins)
-                    OUTPUT INSERTED.UserId, INSERTED.CreatedAt
-                    VALUES (@Username, @PasswordHash, @DisplayName, @Avatar, GETDATE(), @HighScore, @TotalScore, @TotalGames, @TotalWins);";
-
-                using var trans = conn.BeginTransaction();
-
-                int newUserId;
-                DateTime createdAt;
-
-                using (var insertCmd = new SqlCommand(insertSql, conn, trans))
-                {
-                    insertCmd.Parameters.AddWithValue("@Username", username);
-                    insertCmd.Parameters.AddWithValue("@PasswordHash", hash);
-                    insertCmd.Parameters.AddWithValue("@DisplayName", displayName);
-                    insertCmd.Parameters.AddWithValue("@Avatar", avatar);
-                    insertCmd.Parameters.AddWithValue("@HighScore", initialHighScore);
-                    insertCmd.Parameters.AddWithValue("@TotalScore", initialTotalScore);
-                    insertCmd.Parameters.AddWithValue("@TotalGames", initialTotalGames);
-                    insertCmd.Parameters.AddWithValue("@TotalWins", initialTotalWins);
-
-                    using var reader = insertCmd.ExecuteReader();
-                    if (!reader.Read())
-                    {
-                        trans.Rollback();
-                        return (false, "Không thể tạo tài khoản, vui lòng thử lại.", null);
-                    }
-
-                    newUserId = reader.GetInt32(0);
-                    createdAt = reader.GetDateTime(1);
-                }
-
-                // Nếu có chuyển đổi dữ liệu từ khách, di chuyển lịch sử GuestHistory vào GameHistory trong CSDL
-                if (migrateGuestData && GuestHistory.Count > 0)
-                {
-                    foreach (var h in GuestHistory)
-                    {
-                        string insertHistorySql = @"
-                            INSERT INTO GameHistory (UserId, Difficulty, Score, DurationSeconds, Mistakes, IsWin, PlayedAt)
-                            VALUES (@UserId, @Difficulty, @Score, @DurationSeconds, @Mistakes, @IsWin, @PlayedAt);";
-
-                        using var histCmd = new SqlCommand(insertHistorySql, conn, trans);
-                        histCmd.Parameters.AddWithValue("@UserId", newUserId);
-                        histCmd.Parameters.AddWithValue("@Difficulty", h.Difficulty);
-                        histCmd.Parameters.AddWithValue("@Score", h.Score);
-                        histCmd.Parameters.AddWithValue("@DurationSeconds", h.DurationSeconds);
-                        histCmd.Parameters.AddWithValue("@Mistakes", h.Mistakes);
-                        histCmd.Parameters.AddWithValue("@IsWin", h.IsWin);
-                        histCmd.Parameters.AddWithValue("@PlayedAt", h.PlayedAt);
-                        histCmd.ExecuteNonQuery();
-                    }
-                    GuestHistory.Clear();
-                }
-
-                trans.Commit();
-
-                var newUser = new UserAccount
-                {
-                    UserId = newUserId,
-                    Username = username,
-                    DisplayName = displayName,
-                    Avatar = avatar,
-                    CreatedAt = createdAt,
-                    HighScore = initialHighScore,
-                    TotalScore = initialTotalScore,
-                    TotalGames = initialTotalGames,
-                    TotalWins = initialTotalWins,
-                    IsGuest = false
-                };
-
-                CurrentUser = newUser;
-                CurrentUserChanged?.Invoke();
-                return (true, "Tạo tài khoản mới thành công!", newUser);
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Lỗi cơ sở dữ liệu: {ex.Message}", null);
-            }
-        }
-
-        public static (bool Success, string Message, UserAccount? User) Login(string username, string password)
-        {
-            username = username.Trim();
-            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-                return (false, "Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.", null);
-
-            try
-            {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-
-                string hash = HashPassword(password);
-                string sql = @"
-                    SELECT UserId, Username, DisplayName, 
-                           ISNULL(Avatar, N'👤') AS Avatar, 
-                           CreatedAt, HighScore, TotalScore, TotalGames, TotalWins
-                    FROM Users 
-                    WHERE LOWER(Username) = LOWER(@Username) AND PasswordHash = @PasswordHash";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@Username", username);
-                cmd.Parameters.AddWithValue("@PasswordHash", hash);
-
-                using var reader = cmd.ExecuteReader();
-                if (reader.Read())
-                {
-                    var user = new UserAccount
-                    {
-                        UserId = reader.GetInt32(0),
-                        Username = reader.GetString(1),
-                        DisplayName = reader.GetString(2),
-                        Avatar = reader.GetString(3),
-                        CreatedAt = reader.GetDateTime(4),
-                        HighScore = reader.GetInt32(5),
-                        TotalScore = reader.GetInt32(6),
-                        TotalGames = reader.GetInt32(7),
-                        TotalWins = reader.GetInt32(8),
-                        IsGuest = false
-                    };
-
-                    CurrentUser = user;
-                    CurrentUserChanged?.Invoke();
-                    return (true, "Đăng nhập thành công!", user);
-                }
-                else
-                {
-                    return (false, "Sai tên đăng nhập hoặc mật khẩu!", null);
-                }
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Lỗi kết nối cơ sở dữ liệu: {ex.Message}", null);
-            }
-        }
-
-        public static void LoginAsGuest(string? customNickname = null, string? customAvatar = null)
-        {
-            string name = string.IsNullOrWhiteSpace(customNickname) ? GenerateGuestName() : customNickname.Trim();
-            string avatar = string.IsNullOrWhiteSpace(customAvatar) ? "👤" : customAvatar;
-
-            // Nếu khách cũ tiếp tục chơi, giữ lại thành tích tạm
-            if (CurrentUser != null && CurrentUser.IsGuest)
-            {
-                CurrentUser.DisplayName = name;
-                CurrentUser.Avatar = avatar;
+                if (MigratedSessions.Contains(player.SessionId)) return false;
+                var history = HistoryFor(player);
+                if (history.All(h => h.GameId != gameId)) { record.HistoryId = history.Count+1; history.Add(record); }
+                ApplyStatistics(player,history);
             }
             else
             {
-                CurrentUser = new UserAccount
-                {
-                    UserId = 0,
-                    Username = "guest",
-                    DisplayName = name,
-                    Avatar = avatar,
-                    CreatedAt = DateTime.Now,
-                    HighScore = 0,
-                    TotalScore = 0,
-                    TotalGames = 0,
-                    TotalWins = 0,
-                    IsGuest = true
-                };
+                await Store.SaveResultAsync(record);
+                // Commit is the saving outcome; a subsequent refresh failure cannot undo it.
+                try { ApplyStatistics(player,await Store.GetHistoryAsync(userId)); }
+                catch { /* History UI reports refresh errors separately. */ }
             }
-
-            CurrentUserChanged?.Invoke();
+            Notify(player); return true;
         }
+        catch { return false; }
+        finally { Operations.Release(); }
+    }
 
-        public static string GenerateGuestName()
+    public static async Task<(bool Success,List<GameHistoryRecord> Records)> GetUserHistoryAsync(UserAccount player)
+    {
+        await Operations.WaitAsync();
+        try
         {
-            var adjectives = new[] { "Khách", "Tân thủ", "Cao thủ", "Người chơi", "Ninja", "Chiến binh" };
-            var rnd = new Random();
-            string adj = adjectives[rnd.Next(adjectives.Length)];
-            int number = rnd.Next(100, 999);
-            return $"{adj} #{number}";
+            List<GameHistoryRecord> history = player.IsGuest ? HistoryFor(player).OrderByDescending(h => h.PlayedAt).ToList() : await Store.GetHistoryAsync(player.UserId);
+            ApplyStatistics(player,history); Notify(player);
+            return (true,history);
         }
-
-        public static void Logout()
-        {
-            CurrentUser = null;
-            CurrentUserChanged?.Invoke();
-        }
-
-        public static void RefreshCurrentUser()
-        {
-            if (CurrentUser == null || CurrentUser.IsGuest) return;
-
-            try
-            {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-
-                string sql = "SELECT DisplayName, ISNULL(Avatar, N'👤'), HighScore, TotalScore, TotalGames, TotalWins FROM Users WHERE UserId = @UserId";
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@UserId", CurrentUser.UserId);
-
-                using var reader = cmd.ExecuteReader();
-                if (reader.Read())
-                {
-                    CurrentUser.DisplayName = reader.GetString(0);
-                    CurrentUser.Avatar = reader.GetString(1);
-                    CurrentUser.HighScore = reader.GetInt32(2);
-                    CurrentUser.TotalScore = reader.GetInt32(3);
-                    CurrentUser.TotalGames = reader.GetInt32(4);
-                    CurrentUser.TotalWins = reader.GetInt32(5);
-                    CurrentUserChanged?.Invoke();
-                }
-            }
-            catch
-            {
-                // Bỏ qua lỗi tạm thời
-            }
-        }
-
-        public static bool RecordGameResult(string difficulty, int score, int durationSeconds, int mistakes, bool isWin)
-        {
-            if (CurrentUser == null) return false;
-
-            // Nếu là khách: ghi vào GuestHistory tạm thời
-            if (CurrentUser.IsGuest)
-            {
-                CurrentUser.TotalGames++;
-                if (isWin) CurrentUser.TotalWins++;
-                CurrentUser.TotalScore += score;
-                if (score > CurrentUser.HighScore) CurrentUser.HighScore = score;
-
-                GuestHistory.Add(new GameHistoryRecord
-                {
-                    HistoryId = GuestHistory.Count + 1,
-                    UserId = 0,
-                    Difficulty = difficulty,
-                    Score = score,
-                    DurationSeconds = durationSeconds,
-                    Mistakes = mistakes,
-                    IsWin = isWin,
-                    PlayedAt = DateTime.Now
-                });
-
-                CurrentUserChanged?.Invoke();
-                return true;
-            }
-
-            try
-            {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-
-                using var trans = conn.BeginTransaction();
-
-                // 1. Thêm vào bảng GameHistory
-                string insertHistorySql = @"
-                    INSERT INTO GameHistory (UserId, Difficulty, Score, DurationSeconds, Mistakes, IsWin, PlayedAt)
-                    VALUES (@UserId, @Difficulty, @Score, @DurationSeconds, @Mistakes, @IsWin, GETDATE());";
-
-                using (var cmd = new SqlCommand(insertHistorySql, conn, trans))
-                {
-                    cmd.Parameters.AddWithValue("@UserId", CurrentUser.UserId);
-                    cmd.Parameters.AddWithValue("@Difficulty", difficulty);
-                    cmd.Parameters.AddWithValue("@Score", score);
-                    cmd.Parameters.AddWithValue("@DurationSeconds", durationSeconds);
-                    cmd.Parameters.AddWithValue("@Mistakes", mistakes);
-                    cmd.Parameters.AddWithValue("@IsWin", isWin);
-                    cmd.ExecuteNonQuery();
-                }
-
-                // 2. Cập nhật bảng Users
-                string updateUserSql = @"
-                    UPDATE Users
-                    SET TotalGames = TotalGames + 1,
-                        TotalWins = TotalWins + CASE WHEN @IsWin = 1 THEN 1 ELSE 0 END,
-                        TotalScore = TotalScore + @Score,
-                        HighScore = CASE WHEN @Score > HighScore THEN @Score ELSE HighScore END
-                    WHERE UserId = @UserId;";
-
-                using (var cmd = new SqlCommand(updateUserSql, conn, trans))
-                {
-                    cmd.Parameters.AddWithValue("@UserId", CurrentUser.UserId);
-                    cmd.Parameters.AddWithValue("@Score", score);
-                    cmd.Parameters.AddWithValue("@IsWin", isWin ? 1 : 0);
-                    cmd.ExecuteNonQuery();
-                }
-
-                trans.Commit();
-
-                // Cập nhật model in-memory
-                CurrentUser.TotalGames++;
-                if (isWin) CurrentUser.TotalWins++;
-                CurrentUser.TotalScore += score;
-                if (score > CurrentUser.HighScore) CurrentUser.HighScore = score;
-
-                CurrentUserChanged?.Invoke();
-                return true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-
-        public static List<GameHistoryRecord> GetUserHistory(int userId)
-        {
-            // Nếu là khách: trả về danh sách lịch sử trong phiên
-            if (userId == 0 || (CurrentUser != null && CurrentUser.IsGuest))
-            {
-                return GuestHistory.OrderByDescending(x => x.PlayedAt).ToList();
-            }
-
-            var list = new List<GameHistoryRecord>();
-            try
-            {
-                using var conn = DatabaseHelper.GetConnection();
-                conn.Open();
-
-                string sql = @"
-                    SELECT HistoryId, UserId, Difficulty, Score, DurationSeconds, Mistakes, IsWin, PlayedAt
-                    FROM GameHistory
-                    WHERE UserId = @UserId
-                    ORDER BY PlayedAt DESC";
-
-                using var cmd = new SqlCommand(sql, conn);
-                cmd.Parameters.AddWithValue("@UserId", userId);
-
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    list.Add(new GameHistoryRecord
-                    {
-                        HistoryId = reader.GetInt32(0),
-                        UserId = reader.GetInt32(1),
-                        Difficulty = reader.GetString(2),
-                        Score = reader.GetInt32(3),
-                        DurationSeconds = reader.GetInt32(4),
-                        Mistakes = reader.GetInt32(5),
-                        IsWin = reader.GetBoolean(6),
-                        PlayedAt = reader.GetDateTime(7)
-                    });
-                }
-            }
-            catch
-            {
-                // Bỏ qua lỗi
-            }
-
-            return list;
-        }
+        catch { return (false,new()); }
+        finally { Operations.Release(); }
+    }
+    public static void ApplyStatistics(UserAccount player,IReadOnlyCollection<GameHistoryRecord> history)
+    {
+        player.TotalGames = history.Count; player.TotalWins = history.Count(h => h.IsWin);
+        player.TotalScore = history.Sum(h => h.Score); player.HighScore = history.Count == 0 ? 0 : history.Max(h => h.Score);
     }
 }

@@ -4,6 +4,7 @@ namespace sudokuvip.Models
 {
     public class UserAccount
     {
+        public Guid SessionId { get; } = Guid.NewGuid();
         public int UserId { get; set; }
         public string Username { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
@@ -20,6 +21,7 @@ namespace sudokuvip.Models
 
     public class GameHistoryRecord
     {
+        public Guid GameId { get; set; } = Guid.NewGuid();
         public int HistoryId { get; set; }
         public int UserId { get; set; }
         public string Difficulty { get; set; } = string.Empty;

@@ -11,8 +11,13 @@ namespace sudokuvip
             LoadData();
         }
 
-        private void LoadData()
+        private bool _loading;
+        private bool _closed;
+        protected override void OnClosed(System.EventArgs e) { _closed = true; base.OnClosed(e); }
+
+        private async void LoadData()
         {
+            if (_loading || _closed) return;
             var user = AuthService.CurrentUser;
             if (user == null)
             {
@@ -27,7 +32,18 @@ namespace sudokuvip
                 return;
             }
 
-            AuthService.RefreshCurrentUser();
+            _loading = true;
+            txtEmptyHistory.Text = "Đang tải lịch sử…";
+            txtEmptyHistory.Visibility = Visibility.Visible;
+            var result = await AuthService.GetUserHistoryAsync(user);
+            _loading = false;
+            if (_closed) return;
+            if (!result.Success)
+            {
+                txtEmptyHistory.Text = "Không tải được lịch sử. Kiểm tra kết nối SQL Server và thử làm mới.";
+                txtEmptyHistory.Visibility = Visibility.Visible;
+                return;
+            }
 
             txtHistoryAvatar.Text = string.IsNullOrEmpty(user.Avatar) ? "👤" : user.Avatar;
             txtPlayerName.Text = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName;
@@ -38,7 +54,7 @@ namespace sudokuvip
             txtStatTotalWins.Text = user.TotalWins.ToString();
             txtStatWinRate.Text = $"{user.WinRate}%";
 
-            var historyList = AuthService.GetUserHistory(user.IsGuest ? 0 : user.UserId);
+            var historyList = result.Records;
             dgHistory.ItemsSource = historyList;
 
             if (historyList.Count == 0)

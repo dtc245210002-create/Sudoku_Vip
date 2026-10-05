@@ -12,205 +12,18 @@ using sudokuvip.Services;
 
 namespace sudokuvip
 {
-    public class SudokuModel
-    {
-        public int[,] CurrentBoard { get; set; } = new int[9, 9];
-        public int[,] SolutionBoard { get; set; } = new int[9, 9];
-        public bool[,] IsFixed { get; set; } = new bool[9, 9];
-        public HashSet<int>[,] Notes { get; set; } = new HashSet<int>[9, 9];
-
-        public int Mistakes { get; set; } = 0;
-        public int Score { get; set; } = 0;
-        public int HintsLeft { get; set; } = 3;
-
-        public SudokuModel()
-        {
-            for (int r = 0; r < 9; r++)
-            {
-                for (int c = 0; c < 9; c++)
-                {
-                    Notes[r, c] = new HashSet<int>();
-                }
-            }
-        }
-    }
-
-    public class MoveHistoryItem
-    {
-        public int Row { get; set; }
-        public int Col { get; set; }
-        public int PreviousValue { get; set; }
-        public int NewValue { get; set; }
-        public HashSet<int> PreviousNotes { get; set; } = new HashSet<int>();
-        public HashSet<int> NewNotes { get; set; } = new HashSet<int>();
-        public int ScoreChange { get; set; }
-        public bool WasMistake { get; set; }
-    }
-
-    public class SudokuEngine
-    {
-        private static readonly Random _random = new Random();
-
-        public SudokuModel StartNewGame(int difficultyLevel)
-        {
-            var model = new SudokuModel();
-            GenerateRandomBoard(model);
-
-            // Số ô bị xóa tùy theo mức độ
-            int cellsToRemove = difficultyLevel switch
-            {
-                0 => 32, // Dễ
-                1 => 42, // Trung bình
-                2 => 50, // Khó
-                3 => 56, // Chuyên gia
-                _ => 36
-            };
-
-            RemoveCells(model, cellsToRemove);
-            return model;
-        }
-
-        public bool MakeMove(SudokuModel model, int row, int col, int value)
-        {
-            if (model.IsFixed[row, col]) return false;
-
-            if (model.SolutionBoard[row, col] == value)
-            {
-                model.CurrentBoard[row, col] = value;
-                model.Notes[row, col].Clear();
-                model.Score += 10;
-                return true;
-            }
-            else
-            {
-                model.CurrentBoard[row, col] = value; // Hiển thị số sai màu đỏ
-                model.Mistakes++;
-                return false;
-            }
-        }
-
-        public int GetHint(SudokuModel model, int row, int col)
-        {
-            if (model.HintsLeft > 0 && model.CurrentBoard[row, col] != model.SolutionBoard[row, col])
-            {
-                model.HintsLeft--;
-                int correctValue = model.SolutionBoard[row, col];
-                model.CurrentBoard[row, col] = correctValue;
-                model.Notes[row, col].Clear();
-                model.Score += 5;
-                return correctValue;
-            }
-            return -1;
-        }
-
-        public bool IsGameWon(SudokuModel model)
-        {
-            for (int r = 0; r < 9; r++)
-            {
-                for (int c = 0; c < 9; c++)
-                {
-                    if (model.CurrentBoard[r, c] != model.SolutionBoard[r, c])
-                        return false;
-                }
-            }
-            return true;
-        }
-
-        private void GenerateRandomBoard(SudokuModel model)
-        {
-            // 1. Tạo bàn cờ Sudoku hợp lệ cơ sở
-            int[,] baseGrid = new int[9, 9];
-            for (int r = 0; r < 9; r++)
-            {
-                for (int c = 0; c < 9; c++)
-                {
-                    baseGrid[r, c] = ((r * 3 + r / 3 + c) % 9) + 1;
-                }
-            }
-
-            // 2. Xáo trộn các số 1-9
-            int[] mapping = Enumerable.Range(1, 9).OrderBy(_ => _random.Next()).ToArray();
-            for (int r = 0; r < 9; r++)
-            {
-                for (int c = 0; c < 9; c++)
-                {
-                    baseGrid[r, c] = mapping[baseGrid[r, c] - 1];
-                }
-            }
-
-            // 3. Hoán vị các hàng trong cùng một khối 3x3
-            for (int block = 0; block < 3; block++)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    int r1 = block * 3 + _random.Next(3);
-                    int r2 = block * 3 + _random.Next(3);
-                    if (r1 != r2)
-                    {
-                        for (int c = 0; c < 9; c++)
-                        {
-                            (baseGrid[r1, c], baseGrid[r2, c]) = (baseGrid[r2, c], baseGrid[r1, c]);
-                        }
-                    }
-                }
-            }
-
-            // 4. Hoán vị các cột trong cùng một khối 3x3
-            for (int block = 0; block < 3; block++)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    int c1 = block * 3 + _random.Next(3);
-                    int c2 = block * 3 + _random.Next(3);
-                    if (c1 != c2)
-                    {
-                        for (int r = 0; r < 9; r++)
-                        {
-                            (baseGrid[r, c1], baseGrid[r, c2]) = (baseGrid[r, c2], baseGrid[r, c1]);
-                        }
-                    }
-                }
-            }
-
-            // Gán vào Solution và Current
-            for (int r = 0; r < 9; r++)
-            {
-                for (int c = 0; c < 9; c++)
-                {
-                    model.SolutionBoard[r, c] = baseGrid[r, c];
-                    model.CurrentBoard[r, c] = baseGrid[r, c];
-                    model.IsFixed[r, c] = true;
-                }
-            }
-        }
-
-        private void RemoveCells(SudokuModel model, int count)
-        {
-            List<(int r, int c)> positions = new List<(int, int)>();
-            for (int r = 0; r < 9; r++)
-                for (int c = 0; c < 9; c++)
-                    positions.Add((r, c));
-
-            // Xáo trộn vị trí để xóa ngẫu nhiên
-            positions = positions.OrderBy(_ => _random.Next()).ToList();
-
-            int removed = 0;
-            foreach (var (r, c) in positions)
-            {
-                if (removed >= count) break;
-                model.CurrentBoard[r, c] = 0;
-                model.IsFixed[r, c] = false;
-                removed++;
-            }
-        }
-    }
-
     public partial class MainWindow : Window
     {
         private readonly SudokuEngine _engine = new SudokuEngine();
         private SudokuModel _currentModel = new SudokuModel();
         private readonly Button[,] _cells = new Button[9, 9];
-        private readonly Stack<MoveHistoryItem> _undoStack = new Stack<MoveHistoryItem>();
+        private UserAccount? _gamePlayer;
+        private bool _isGenerating;
+        private int _generationVersion;
+        private bool _closed;
+        private Action<string,string,bool> _showOutcome = (message,title,won) => MessageBox.Show(message,title,
+            MessageBoxButton.OK,won ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        private bool CanPlay => !_closed && !_isGenerating && _currentModel.State == GameState.Playing;
 
         private int _selectedRow = -1;
         private int _selectedCol = -1;
@@ -220,7 +33,7 @@ namespace sudokuvip
         // Quản lý thời gian
         private readonly DispatcherTimer _gameTimer;
         private int _elapsedSeconds = 0;
-        private bool _isPaused = false;
+
 
         public MainWindow()
         {
@@ -241,6 +54,7 @@ namespace sudokuvip
 
         private void GameTimer_Tick(object? sender, EventArgs e)
         {
+            if (!CanPlay) return;
             _elapsedSeconds++;
             int minutes = _elapsedSeconds / 60;
             int seconds = _elapsedSeconds % 60;
@@ -283,17 +97,28 @@ namespace sudokuvip
             return new Thickness(left, top, right, bottom);
         }
 
-        private void StartGame(int difficulty)
+        private async void StartGame(int difficulty)
         {
             _currentDifficulty = difficulty;
-            _currentModel = _engine.StartNewGame(difficulty);
-            _undoStack.Clear();
+            int version = ++_generationVersion;
+            _isGenerating = true;
+            _gameTimer.Stop();
+            var player = AuthService.CurrentUser;
+            UpdateControlState();
+            var model = await System.Threading.Tasks.Task.Run(() => _engine.StartNewGame(difficulty));
+            if (_closed || version != _generationVersion) return;
+            _currentModel = model;
+            _gamePlayer = player;
+            _isGenerating = false;
             _selectedRow = -1;
             _selectedCol = -1;
 
             _elapsedSeconds = 0;
             txtTimer.Text = "00:00";
-            _isPaused = false;
+            BoardGrid.Visibility = Visibility.Visible;
+            _isPencilMode = false;
+            UpdatePencilButton();
+            UpdateControlState();
             btnPause.Content = "⏸";
             _gameTimer.Start();
 
@@ -353,7 +178,7 @@ namespace sudokuvip
 
         private void Cell_Click(object sender, RoutedEventArgs e)
         {
-            if (_isPaused) return;
+            if (!CanPlay) return;
 
             if (sender is Button btn && btn.Tag is Point pt)
             {
@@ -399,7 +224,7 @@ namespace sudokuvip
 
         private void Number_Click(object sender, RoutedEventArgs e)
         {
-            if (_isPaused) return;
+            if (!CanPlay) return;
             if (sender is not Button btn || btn.Content == null) return;
 
             if (_selectedRow == -1 || _selectedCol == -1 || _currentModel.IsFixed[_selectedRow, _selectedCol])
@@ -417,137 +242,55 @@ namespace sudokuvip
 
         private void ApplyNumberInput(int val)
         {
-            if (_selectedRow == -1 || _selectedCol == -1)
-            {
-                SelectFirstEmptyCell();
-            }
+            if (!CanPlay) return;
+            if (_selectedRow < 0 || _selectedCol < 0) SelectFirstEmptyCell();
+            if (_selectedRow < 0 || _selectedCol < 0 || _currentModel.IsFixed[_selectedRow,_selectedCol]) return;
+            if (_isPencilMode) _engine.ToggleNote(_currentModel,_selectedRow,_selectedCol,val);
+            else _engine.MakeMove(_currentModel,_selectedRow,_selectedCol,val);
+            RefreshMove();
+            if (_engine.IsGameWon(_currentModel)) HandleGameWon();
+            else if (_currentModel.Mistakes >= 3) HandleGameOver();
+        }
 
-            if (_selectedRow == -1 || _selectedCol == -1 || _currentModel.IsFixed[_selectedRow, _selectedCol])
-                return;
-
-            int prevVal = _currentModel.CurrentBoard[_selectedRow, _selectedCol];
-            var prevNotes = new HashSet<int>(_currentModel.Notes[_selectedRow, _selectedCol]);
-
-            if (_isPencilMode)
-            {
-                // Bật/tắt ghi chú số nháp
-                if (_currentModel.Notes[_selectedRow, _selectedCol].Contains(val))
-                    _currentModel.Notes[_selectedRow, _selectedCol].Remove(val);
-                else
-                    _currentModel.Notes[_selectedRow, _selectedCol].Add(val);
-
-                _undoStack.Push(new MoveHistoryItem
-                {
-                    Row = _selectedRow,
-                    Col = _selectedCol,
-                    PreviousValue = prevVal,
-                    NewValue = prevVal,
-                    PreviousNotes = prevNotes,
-                    NewNotes = new HashSet<int>(_currentModel.Notes[_selectedRow, _selectedCol]),
-                    ScoreChange = 0,
-                    WasMistake = false
-                });
-
-                RenderCellContent(_selectedRow, _selectedCol);
-                return;
-            }
-
-            // Chế độ điền số thông thường
-            bool isCorrect = _engine.MakeMove(_currentModel, _selectedRow, _selectedCol, val);
-
-            _undoStack.Push(new MoveHistoryItem
-            {
-                Row = _selectedRow,
-                Col = _selectedCol,
-                PreviousValue = prevVal,
-                NewValue = val,
-                PreviousNotes = prevNotes,
-                NewNotes = new HashSet<int>(_currentModel.Notes[_selectedRow, _selectedCol]),
-                ScoreChange = isCorrect ? 10 : 0,
-                WasMistake = !isCorrect
-            });
-
+        private void RefreshMove()
+        {
             UpdateUIAfterMove();
-            RenderCellContent(_selectedRow, _selectedCol);
+            btnHint.Content = $"💡 {_currentModel.HintsLeft}";
+            if (_selectedRow >= 0 && _selectedCol >= 0) RenderCellContent(_selectedRow,_selectedCol);
             HighlightSelection();
-
-            if (isCorrect)
-            {
-                if (_engine.IsGameWon(_currentModel))
-                {
-                    HandleGameWon();
-                }
-            }
-            else
-            {
-                if (_currentModel.Mistakes >= 3)
-                {
-                    HandleGameOver();
-                }
-            }
         }
 
         private void BtnErase_Click(object sender, RoutedEventArgs e)
         {
-            if (_isPaused || _selectedRow == -1 || _selectedCol == -1 || _currentModel.IsFixed[_selectedRow, _selectedCol])
-                return;
-
-            int prevVal = _currentModel.CurrentBoard[_selectedRow, _selectedCol];
-            var prevNotes = new HashSet<int>(_currentModel.Notes[_selectedRow, _selectedCol]);
-
-            if (prevVal == 0 && prevNotes.Count == 0) return;
-
-            _currentModel.CurrentBoard[_selectedRow, _selectedCol] = 0;
-            _currentModel.Notes[_selectedRow, _selectedCol].Clear();
-
-            _undoStack.Push(new MoveHistoryItem
-            {
-                Row = _selectedRow,
-                Col = _selectedCol,
-                PreviousValue = prevVal,
-                NewValue = 0,
-                PreviousNotes = prevNotes,
-                NewNotes = new HashSet<int>(),
-                ScoreChange = 0,
-                WasMistake = false
-            });
-
-            RenderCellContent(_selectedRow, _selectedCol);
-            HighlightSelection();
+            if (!CanPlay) return;
+            _engine.Erase(_currentModel,_selectedRow,_selectedCol);
+            RefreshMove();
         }
 
         private void BtnUndo_Click(object sender, RoutedEventArgs e)
         {
-            if (_isPaused || _undoStack.Count == 0) return;
-
-            var lastMove = _undoStack.Pop();
-            _currentModel.CurrentBoard[lastMove.Row, lastMove.Col] = lastMove.PreviousValue;
-            _currentModel.Notes[lastMove.Row, lastMove.Col] = new HashSet<int>(lastMove.PreviousNotes);
-
-            if (lastMove.WasMistake && _currentModel.Mistakes > 0)
-                _currentModel.Mistakes--;
-
-            if (lastMove.ScoreChange > 0)
-                _currentModel.Score = Math.Max(0, _currentModel.Score - lastMove.ScoreChange);
-
-            _selectedRow = lastMove.Row;
-            _selectedCol = lastMove.Col;
-
-            UpdateUIAfterMove();
-            RenderCellContent(lastMove.Row, lastMove.Col);
-            HighlightSelection();
+            if (!CanPlay) return;
+            var move = _engine.Undo(_currentModel);
+            if (move == null) return;
+            _selectedRow = move.Row; _selectedCol = move.Col;
+            RefreshMove();
         }
 
         private void BtnPencil_Click(object sender, RoutedEventArgs e)
         {
+            if (!CanPlay) return;
             _isPencilMode = !_isPencilMode;
+            UpdatePencilButton();
+        }
+        private void UpdatePencilButton()
+        {
             btnPencil.Background = _isPencilMode ? new SolidColorBrush(Color.FromRgb(77, 112, 184)) : new SolidColorBrush(Color.FromRgb(34, 34, 34));
             btnPencil.Foreground = _isPencilMode ? Brushes.White : new SolidColorBrush(Color.FromRgb(160, 160, 160));
         }
 
         private void BtnHint_Click(object sender, RoutedEventArgs e)
         {
-            if (_isPaused || _selectedRow == -1 || _selectedCol == -1) return;
+            if (!CanPlay || _selectedRow == -1 || _selectedCol == -1) return;
 
             if (_currentModel.CurrentBoard[_selectedRow, _selectedCol] == _currentModel.SolutionBoard[_selectedRow, _selectedCol])
             {
@@ -561,25 +304,10 @@ namespace sudokuvip
                 return;
             }
 
-            int prevVal = _currentModel.CurrentBoard[_selectedRow, _selectedCol];
-            var prevNotes = new HashSet<int>(_currentModel.Notes[_selectedRow, _selectedCol]);
-
             int correctValue = _engine.GetHint(_currentModel, _selectedRow, _selectedCol);
             if (correctValue != -1)
             {
                 btnHint.Content = $"💡 {_currentModel.HintsLeft}";
-
-                _undoStack.Push(new MoveHistoryItem
-                {
-                    Row = _selectedRow,
-                    Col = _selectedCol,
-                    PreviousValue = prevVal,
-                    NewValue = correctValue,
-                    PreviousNotes = prevNotes,
-                    NewNotes = new HashSet<int>(),
-                    ScoreChange = 5,
-                    WasMistake = false
-                });
 
                 UpdateUIAfterMove();
                 RenderCellContent(_selectedRow, _selectedCol);
@@ -594,19 +322,31 @@ namespace sudokuvip
 
         private void BtnPause_Click(object sender, RoutedEventArgs e)
         {
-            _isPaused = !_isPaused;
-            if (_isPaused)
-            {
-                _gameTimer.Stop();
-                btnPause.Content = "▶";
-                BoardGrid.Visibility = Visibility.Hidden;
-            }
-            else
-            {
-                _gameTimer.Start();
-                btnPause.Content = "⏸";
-                BoardGrid.Visibility = Visibility.Visible;
-            }
+            if (_isGenerating || _currentModel.State is GameState.Won or GameState.Lost) return;
+            _engine.TogglePause(_currentModel);
+            bool paused = _currentModel.State == GameState.Paused;
+            if (paused) _gameTimer.Stop(); else _gameTimer.Start();
+            btnPause.Content = paused ? "▶" : "⏸";
+            BoardGrid.Visibility = paused ? Visibility.Hidden : Visibility.Visible;
+            UpdateControlState();
+        }
+
+        private void UpdateControlState()
+        {
+            BoardGrid.IsEnabled = CanPlay;
+            btnHint.IsEnabled = btnPencil.IsEnabled = btnUndo.IsEnabled = btnErase.IsEnabled = CanPlay;
+            btnPause.IsEnabled = !_isGenerating && _currentModel.State is GameState.Playing or GameState.Paused;
+            btnLogout.IsEnabled = btnSaveGuestScore.IsEnabled = !_isGenerating && _currentModel.SaveState != ResultSaveState.Saving;
+            btnNewGame.IsEnabled = btnDiffEasy.IsEnabled = btnDiffMedium.IsEnabled = btnDiffHard.IsEnabled = btnDiffExpert.IsEnabled =
+                !_isGenerating && _currentModel.SaveState != ResultSaveState.Saving;
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _closed = true; ++_generationVersion;
+            _gameTimer.Stop(); _gameTimer.Tick -= GameTimer_Tick;
+            AuthService.CurrentUserChanged -= UpdateUserProfileUI;
+            base.OnClosed(e);
         }
 
         private void Difficulty_Click(object sender, RoutedEventArgs e)
@@ -694,7 +434,8 @@ namespace sudokuvip
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (_isPaused) return;
+            if (e.Key == Key.Space) { e.Handled = true; BtnPause_Click(this, new RoutedEventArgs()); return; }
+            if (!CanPlay) return;
 
             // Xử lý phím số 1-9 từ bàn phím chính và numpad
             int num = -1;
@@ -778,40 +519,28 @@ namespace sudokuvip
 
         #region QUẢN LÝ TÀI KHOẢN & LỊCH SỬ ĐẤU
 
-        private void HandleGameWon()
+        private void HandleGameWon() => FinishGame(true);
+        private void HandleGameOver() => FinishGame(false);
+
+        private async void FinishGame(bool won)
         {
+            var model = _currentModel;
+            if (!_engine.TryFinish(model,won)) return;
             _gameTimer.Stop();
-            string diffName = GetDifficultyName(_currentDifficulty);
-            int score = _currentModel.Score;
+            model.SaveState = ResultSaveState.Saving;
+            UpdateControlState();
+            string difficulty = GetDifficultyName(_currentDifficulty);
             int duration = _elapsedSeconds;
-            int mistakes = _currentModel.Mistakes;
-
-            AuthService.RecordGameResult(diffName, score, duration, mistakes, true);
-            UpdateUserProfileUI();
-
-            string saveStatus = (AuthService.CurrentUser != null && !AuthService.CurrentUser.IsGuest)
-                ? "\n\n💾 Kết quả ván đấu đã được lưu vào CSDL SQL Server!"
-                : "\n\n💡 Bạn đang chơi chế độ Khách. Đăng nhập để lưu thành tích vào CSDL!";
-
-            MessageBox.Show($"🎉 CHÚC MỪNG! BẠN ĐÃ CHIẾN THẮNG!\n\nĐộ khó: {diffName}\nĐiểm số: {score}\nThời gian: {txtTimer.Text}\nSố lỗi: {mistakes}/3{saveStatus}",
-                "Chiến thắng!", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void HandleGameOver()
-        {
-            _gameTimer.Stop();
-            string diffName = GetDifficultyName(_currentDifficulty);
-            int score = _currentModel.Score;
-            int duration = _elapsedSeconds;
-            int mistakes = _currentModel.Mistakes;
-
-            AuthService.RecordGameResult(diffName, score, duration, mistakes, false);
-            UpdateUserProfileUI();
-
-            MessageBox.Show($"Game Over! Bạn đã mắc {mistakes} lỗi sai.\n\nĐộ khó: {diffName}\nĐiểm ván này: {score}\nThời gian: {txtTimer.Text}\n\nHãy thử lại một ván mới nhé!",
-                "Thua cuộc", MessageBoxButton.OK, MessageBoxImage.Warning);
-
-            StartGame(_currentDifficulty);
+            var player = _gamePlayer;
+            bool saved = await AuthService.RecordGameResultAsync(player,model.GameId,difficulty,model.Score,duration,model.Mistakes,won);
+            model.SaveState = saved ? ResultSaveState.Saved : ResultSaveState.Failed;
+            if (_closed) return;
+            UpdateControlState();
+            string status = saved
+                ? (player?.IsGuest == true ? "Kết quả đã lưu trong phiên Khách này." : "Kết quả đã được lưu vào SQL Server.")
+                : "Không lưu được kết quả. Ván đã kết thúc; dữ liệu SQL chưa được xác nhận.";
+            _showOutcome($"{(won ? "🎉 BẠN ĐÃ CHIẾN THẮNG!" : "Game Over!")}\n\nĐộ khó: {difficulty}\nĐiểm: {model.Score}\nThời gian: {duration/60:D2}:{duration%60:D2}\nSố lỗi: {model.Mistakes}/3\n\n{status}",
+                won ? "Chiến thắng!" : "Thua cuộc",won);
         }
 
         private string GetDifficultyName(int diff)
@@ -868,6 +597,7 @@ namespace sudokuvip
             // Tự động chuyển sang tab đăng ký
             loginWin.ShowDialog();
             UpdateUserProfileUI();
+            if (!ReferenceEquals(_gamePlayer,AuthService.CurrentUser)) StartGame(_currentDifficulty);
         }
 
         private void BtnHistory_Click(object sender, RoutedEventArgs e)

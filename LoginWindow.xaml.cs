@@ -12,6 +12,30 @@ namespace sudokuvip
     {
         public bool IsAuthenticated { get; private set; } = false;
 
+        private bool _authBusy;
+        private bool _closed;
+        private System.Threading.CancellationTokenSource? _usernameCheck;
+        private long _usernameVersion;
+
+        private void SetBusy(bool busy)
+        {
+            _authBusy = busy;
+            btnLogin.IsEnabled = btnRegister.IsEnabled = btnConfirmGuest.IsEnabled = !busy;
+            btnTabLogin.IsEnabled = btnTabRegister.IsEnabled = btnTabGuest.IsEnabled = !busy;
+        }
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            // An authentication operation must settle before the dialog can change identity.
+            if (_authBusy) e.Cancel = true;
+            base.OnClosing(e);
+        }
+        protected override void OnClosed(EventArgs e)
+        {
+            _closed = true;
+            _usernameCheck?.Cancel(); _usernameCheck?.Dispose();
+            base.OnClosed(e);
+        }
+
         private string _selectedRegisterAvatar = "👤";
         private string _selectedGuestAvatar = "👤";
         private bool _isLoginPassVisible = false;
@@ -23,6 +47,9 @@ namespace sudokuvip
             HighlightSelectedAvatar(wpAvatars, _selectedRegisterAvatar);
             HighlightSelectedAvatar(wpGuestAvatars, _selectedGuestAvatar);
 
+            txtLoginUser.MaxLength = txtRegUser.MaxLength = 50;
+            txtRegDisplayName.MaxLength = txtGuestNickname.MaxLength = 100;
+            txtRegPass.MaxLength = txtRegPassVisible.MaxLength = txtRegConfirmPass.MaxLength = 128;
             txtGuestNickname.Text = AuthService.GenerateGuestName();
 
             // Nếu người chơi trước đó là Khách và đã có ván chơi / điểm số, hiển thị tùy chọn giữ lại thành tích
@@ -213,54 +240,55 @@ namespace sudokuvip
             }
         }
 
-        private void TxtRegUser_TextChanged(object sender, TextChangedEventArgs e)
+        private async void TxtRegUser_TextChanged(object sender, TextChangedEventArgs e)
         {
+            long version = ++_usernameVersion;
+            _usernameCheck?.Cancel(); _usernameCheck?.Dispose();
+            var check = _usernameCheck = new System.Threading.CancellationTokenSource();
             string username = txtRegUser.Text.Trim();
-            if (string.IsNullOrEmpty(username))
+            if (lblUserCheck == null) return;
+            if (username.Length == 0) { lblUserCheck.Text = ""; return; }
+            if (!AuthService.ValidUsername(username))
             {
-                lblUserCheck.Text = "";
+                lblUserCheck.Text = "⚠️ Cần 3–50 ký tự: chữ, số hoặc _";
+                lblUserCheck.Foreground = Brushes.Orange;
                 return;
             }
-
-            if (username.Length < 3)
+            lblUserCheck.Text = "Đang kiểm tra tên đăng nhập…";
+            lblUserCheck.Foreground = Brushes.Gray;
+            try
             {
-                lblUserCheck.Text = "⚠️ Tên đăng nhập cần ít nhất 3 ký tự";
-                lblUserCheck.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11));
-                return;
+                await System.Threading.Tasks.Task.Delay(350,check.Token);
+                var status = await AuthService.CheckUsernameExistsAsync(username,check.Token);
+                if (_closed || version != _usernameVersion) return;
+                lblUserCheck.Text = status switch
+                {
+                    UsernameStatus.Available => "✓ Tên đăng nhập khả dụng",
+                    UsernameStatus.Exists => "❌ Tên đăng nhập đã được sử dụng",
+                    _ => "⚠️ Không thể kiểm tra tên: kiểm tra kết nối SQL Server"
+                };
+                lblUserCheck.Foreground = status == UsernameStatus.Available ? Brushes.SeaGreen : Brushes.OrangeRed;
             }
-
-            if (username.Any(ch => !char.IsLetterOrDigit(ch) && ch != '_'))
-            {
-                lblUserCheck.Text = "⚠️ Chỉ dùng chữ cái, số và dấu gạch dưới (_)";
-                lblUserCheck.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68));
-                return;
-            }
-
-            bool exists = AuthService.CheckUsernameExists(username);
-            if (exists)
-            {
-                lblUserCheck.Text = "❌ Tên đăng nhập này đã được sử dụng";
-                lblUserCheck.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68));
-            }
-            else
-            {
-                lblUserCheck.Text = "✓ Tên đăng nhập hợp lệ";
-                lblUserCheck.Foreground = new SolidColorBrush(Color.FromRgb(16, 185, 129));
-            }
+            catch (OperationCanceledException) { }
         }
 
         #endregion
 
         #region ACTIONS: LOGIN, REGISTER, GUEST
 
-        private void BtnLogin_Click(object sender, RoutedEventArgs e)
+        private async void BtnLogin_Click(object sender, RoutedEventArgs e)
         {
+            if (_authBusy) return;
             string username = txtLoginUser.Text.Trim();
             string password = _isLoginPassVisible ? txtLoginPassVisible.Text : txtLoginPass.Password;
 
             lblLoginMessage.Text = "";
 
-            var result = AuthService.Login(username, password);
+            SetBusy(true);
+            lblLoginMessage.Text = "Đang đăng nhập…";
+            var result = await AuthService.LoginAsync(username, password);
+            SetBusy(false);
+            if (_closed) return;
             if (result.Success)
             {
                 IsAuthenticated = true;
@@ -274,8 +302,9 @@ namespace sudokuvip
             }
         }
 
-        private void BtnRegister_Click(object sender, RoutedEventArgs e)
+        private async void BtnRegister_Click(object sender, RoutedEventArgs e)
         {
+            if (_authBusy) return;
             string username = txtRegUser.Text.Trim();
             string displayName = txtRegDisplayName.Text.Trim();
             string password = _isRegPassVisible ? txtRegPassVisible.Text : txtRegPass.Password;
@@ -292,7 +321,11 @@ namespace sudokuvip
 
             bool migrateGuest = chkMigrateGuest.IsChecked == true;
 
-            var result = AuthService.Register(username, password, displayName, _selectedRegisterAvatar, migrateGuest);
+            SetBusy(true);
+            lblRegMessage.Text = "Đang tạo tài khoản…";
+            var result = await AuthService.RegisterAsync(username, password, displayName, _selectedRegisterAvatar, migrateGuest);
+            SetBusy(false);
+            if (_closed) return;
             if (result.Success)
             {
                 string note = migrateGuest ? "\n(Đã chuyển toàn bộ điểm số từ phiên Khách vào tài khoản!)" : "";
@@ -317,6 +350,7 @@ namespace sudokuvip
 
         private void BtnConfirmGuest_Click(object sender, RoutedEventArgs e)
         {
+            if (_authBusy) return;
             string nickname = txtGuestNickname.Text.Trim();
             AuthService.LoginAsGuest(nickname, _selectedGuestAvatar);
 
