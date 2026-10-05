@@ -1,0 +1,163 @@
+<Window x:Class="sudokuvip.HistoryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sudoku VIP - Lịch sử Đấu &amp; Thành tích" 
+        Height="620" Width="820"
+        WindowStartupLocation="CenterOwner"
+        Background="#121212"
+        Foreground="#E0E0E0">
+
+    <Window.Resources>
+        <!-- Style cho Card Thống kê -->
+        <Style x:Key="StatCardBorder" TargetType="Border">
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="BorderBrush" Value="#2D2D2D"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="15,12"/>
+            <Setter Property="Margin" Value="5"/>
+        </Style>
+
+        <!-- Style cho DataGrid -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="#181818"/>
+            <Setter Property="RowBackground" Value="#1E1E1E"/>
+            <Setter Property="AlternatingRowBackground" Value="#181818"/>
+            <Setter Property="Foreground" Value="#EEEEEE"/>
+            <Setter Property="BorderBrush" Value="#2A2A2A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#282828"/>
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="RowHeight" Value="38"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#9CA3AF"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="BorderBrush" Value="#2E2E2E"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="25">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- Header & Profile -->
+            <RowDefinition Height="Auto"/> <!-- Stat Cards -->
+            <RowDefinition Height="*"/>    <!-- DataGrid History -->
+            <RowDefinition Height="Auto"/> <!-- Footer Close -->
+        </Grid.RowDefinitions>
+
+        <!-- 1. Header & Profile Info -->
+        <Border Grid.Row="0" Background="#1A1A1A" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="10" Padding="15" Margin="0,0,0,15">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" x:Name="txtHistoryAvatar" Text="👤" FontSize="36" VerticalAlignment="Center" Margin="0,0,15,0"/>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="txtPlayerName" Text="Người chơi" FontSize="20" FontWeight="Bold" Foreground="#FFFFFF"/>
+                    <TextBlock x:Name="txtPlayerJoinDate" Text="Tham gia: 01/01/2026" FontSize="12" Foreground="#888888" Margin="0,2,0,0"/>
+                </StackPanel>
+
+                <Button Grid.Column="2" x:Name="btnRefresh" Content="🔄 Tải lại" Background="#262626" Foreground="#9CA3AF" BorderThickness="0" Padding="12,6" Cursor="Hand" VerticalAlignment="Center" Click="BtnRefresh_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- 2. 4 Thẻ Thống kê -->
+        <UniformGrid Grid.Row="1" Rows="1" Columns="4" Margin="-5,0,-5,15">
+            <Border Style="{StaticResource StatCardBorder}">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="🎮 Tổng ván chơi" FontSize="12" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="txtStatTotalGames" Text="0" FontSize="22" FontWeight="Bold" Foreground="#FFFFFF" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource StatCardBorder}">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="🏆 Kỷ lục điểm" FontSize="12" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="txtStatHighScore" Text="0" FontSize="22" FontWeight="Bold" Foreground="#FBBF24" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource StatCardBorder}">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="🥇 Ván thắng" FontSize="12" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="txtStatTotalWins" Text="0" FontSize="22" FontWeight="Bold" Foreground="#34D399" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource StatCardBorder}">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="📈 Tỉ lệ thắng" FontSize="12" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="txtStatWinRate" Text="0%" FontSize="22" FontWeight="Bold" Foreground="#60A5FA" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- 3. Bảng Lịch sử Ván đấu -->
+        <Grid Grid.Row="2">
+            <Border Background="#1A1A1A" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="10" Padding="10">
+                <Grid>
+                    <DataGrid x:Name="dgHistory">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Thời gian" Binding="{Binding FormattedPlayedAt}" Width="150"/>
+                            <DataGridTextColumn Header="Độ khó" Binding="{Binding Difficulty}" Width="110"/>
+                            <DataGridTextColumn Header="Điểm số" Binding="{Binding Score}" Width="90"/>
+                            <DataGridTextColumn Header="Thời lượng" Binding="{Binding DurationFormatted}" Width="100"/>
+                            <DataGridTextColumn Header="Số lỗi" Binding="{Binding Mistakes}" Width="80"/>
+                            <DataGridTemplateColumn Header="Kết quả" Width="*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="4" Padding="8,3" HorizontalAlignment="Left"
+                                                Background="{Binding IsWin, Converter={x:Null}}">
+                                            <TextBlock Text="{Binding ResultText}" 
+                                                       Foreground="{Binding ResultColor}" 
+                                                       FontWeight="SemiBold"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock x:Name="txtEmptyHistory" Text="Chưa có lịch sử ván đấu nào. Hãy chơi một ván ngay nhé!" 
+                               FontSize="14" Foreground="#6B7280" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- 4. Footer -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+            <Button Content="Đóng" Width="100" Height="36" Background="#374151" Foreground="#FFFFFF" FontWeight="SemiBold" BorderThickness="0" Cursor="Hand" Click="BtnClose_Click">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

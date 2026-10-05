@@ -1,0 +1,245 @@
+<Window x:Class="sudokuvip.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sudoku" Height="730" Width="1080"
+        Background="#121212" WindowStartupLocation="CenterScreen"
+        PreviewKeyDown="Window_PreviewKeyDown" Focusable="True">
+
+    <!-- KHAI BÁO RESOURCE VÀ STYLE -->
+    <Window.Resources>
+        <!-- Style cho nút bàn phím số -->
+        <Style x:Key="NumPadBtnStyle" TargetType="Button">
+            <Setter Property="Height" Value="65"/>
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Foreground" Value="#5B93E8"/>
+            <Setter Property="FontSize" Value="26"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#333333"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Style cho các nút chức năng tròn (Undo, Erase, Pencil, Hint) -->
+        <Style x:Key="CircleBtnStyle" TargetType="Button">
+            <Setter Property="Width" Value="54"/>
+            <Setter Property="Height" Value="54"/>
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#A0A0A0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="27">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#303030"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#3D3D3D"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Style cho nút chọn độ khó -->
+        <Style x:Key="DiffBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,15,0"/>
+            <Setter Property="Padding" Value="6,2"/>
+        </Style>
+
+        <!-- Style cho nút hành động trên Header (Lịch sử, Đăng xuất) -->
+        <Style x:Key="HeaderActionBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#E0E0E0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#333333"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bdr" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bdr" Property="Background" Value="#333333"/>
+                                <Setter TargetName="bdr" Property="BorderBrush" Value="#4B5563"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bdr" Property="Background" Value="#1E1E1E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- BỐ CỤC GIAO DIỆN -->
+    <Grid Margin="30,15,30,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Thanh tiêu đề phía trên: Độ khó (Trái) & Thông tin người chơi (Phải) -->
+        <Grid Grid.Row="0" Margin="0,0,0,15">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Chọn độ khó bên trái -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Độ khó:" Foreground="#757575" FontSize="14" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                <Button x:Name="btnDiffEasy" Content="Dễ" Tag="0" Foreground="#4A90E2" FontWeight="Bold" Style="{StaticResource DiffBtnStyle}" Click="Difficulty_Click"/>
+                <Button x:Name="btnDiffMedium" Content="Trung bình" Tag="1" Foreground="#A0A0A0" Style="{StaticResource DiffBtnStyle}" Click="Difficulty_Click"/>
+                <Button x:Name="btnDiffHard" Content="Khó" Tag="2" Foreground="#A0A0A0" Style="{StaticResource DiffBtnStyle}" Click="Difficulty_Click"/>
+                <Button x:Name="btnDiffExpert" Content="Chuyên gia" Tag="3" Foreground="#A0A0A0" Style="{StaticResource DiffBtnStyle}" Click="Difficulty_Click"/>
+            </StackPanel>
+
+            <!-- Thông tin người chơi và các nút Lịch sử, Đăng xuất bên phải -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <!-- Card Người chơi -->
+                <Border Background="#1A1A1A" BorderBrush="#2D2D2D" BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="txtUserAvatar" Text="👤" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="txtUserDisplayName" Text="Khách" Foreground="#60A5FA" FontWeight="Bold" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Text="🏆 Kỷ lục: " Foreground="#9CA3AF" FontSize="12" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="txtUserHighScore" Text="0" Foreground="#FBBF24" FontWeight="Bold" FontSize="13" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Nút Lưu điểm nhanh cho khách -->
+                <Button x:Name="btnSaveGuestScore" Content="⭐ Lưu điểm (Đăng ký)" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" Visibility="Collapsed" Click="BtnSaveGuestScore_Click"/>
+
+                <!-- Nút Lịch sử thi đấu -->
+                <Button x:Name="btnHistory" Content="📜 Lịch sử" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnHistory_Click"/>
+
+                <!-- Nút Đăng xuất / Đổi tài khoản -->
+                <Button x:Name="btnLogout" Content="🚪 Đăng xuất" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnLogout_Click"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Khu vực chơi chính -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- BÀN CỜ 9x9 -->
+            <Border Grid.Column="0" BorderBrush="#444444" BorderThickness="3" Width="550" Height="550" Background="#FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="4">
+                <UniformGrid x:Name="BoardGrid" Rows="9" Columns="9"/>
+            </Border>
+
+            <!-- BẢNG ĐIỀU KHIỂN BÊN PHẢI -->
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Width="380">
+                <TextBlock x:Name="txtScore" Text="0" Foreground="#FFFFFF" FontSize="32" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+                <!-- Thanh trạng thái -->
+                <Grid Margin="0,0,0,25">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                        <TextBlock Text="Điểm" Foreground="#757575" FontSize="12" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="txtStatusScore" Text="🏆 0" Foreground="#FFFFFF" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                        <TextBlock Text="Lỗi" Foreground="#757575" FontSize="12" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="txtMistakes" Text="0/3" Foreground="#FFFFFF" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" HorizontalAlignment="Center" Orientation="Horizontal">
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                            <TextBlock Text="Thời gian" Foreground="#757575" FontSize="12" HorizontalAlignment="Right"/>
+                            <TextBlock x:Name="txtTimer" Text="00:00" Foreground="#FFFFFF" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Right"/>
+                        </StackPanel>
+                        <Button x:Name="btnPause" Content="⏸" Foreground="#FFFFFF" Background="#262626" BorderThickness="0" Width="32" Height="32" VerticalAlignment="Center" Cursor="Hand" Click="BtnPause_Click"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- 4 nút công cụ tròn -->
+                <UniformGrid Rows="1" Columns="4" Margin="0,0,0,25">
+                    <Button x:Name="btnUndo" Content="↺" FontSize="20" ToolTip="Hoàn tác (U / Ctrl+Z)" Style="{StaticResource CircleBtnStyle}" Click="BtnUndo_Click"/>
+                    <Button x:Name="btnErase" Content="⌫" FontSize="18" ToolTip="Xoá ô (Delete / Backspace)" Style="{StaticResource CircleBtnStyle}" Click="BtnErase_Click"/>
+                    <Button x:Name="btnPencil" Content="✎" FontSize="18" ToolTip="Bật/Tắt Ghi chú (N)" Style="{StaticResource CircleBtnStyle}" Click="BtnPencil_Click"/>
+                    <Button x:Name="btnHint" Content="💡 3" FontSize="15" ToolTip="Gợi ý (H)" Style="{StaticResource CircleBtnStyle}" Click="BtnHint_Click"/>
+                </UniformGrid>
+
+                <!-- Bàn phím số 3x3 -->
+                <UniformGrid Rows="3" Columns="3" Margin="0,0,0,25">
+                    <Button Content="1" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="2" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="3" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="4" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="5" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="6" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="7" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="8" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                    <Button Content="9" Style="{StaticResource NumPadBtnStyle}" Click="Number_Click"/>
+                </UniformGrid>
+
+                <!-- Nút Trò chơi Mới -->
+                <Button x:Name="btnNewGame" Content="Trò chơi Mới" Background="#4D70B8" Foreground="#FFFFFF" FontSize="16" FontWeight="Bold" Height="50" BorderThickness="0" Cursor="Hand" Click="BtnNewGame_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="8">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="border" Property="Background" Value="#3B5FA7"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="border" Property="Background" Value="#2F4F91"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
