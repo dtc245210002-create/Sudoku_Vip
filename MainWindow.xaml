@@ -1,0 +1,245 @@
+<Window x:Class="sudokuvip.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sudoku VIP" Height="820" Width="1080" MinHeight="800" MinWidth="1060"
+        Background="#121212" WindowStartupLocation="CenterScreen"
+        PreviewKeyDown="Window_PreviewKeyDown" Focusable="True">
+    <Window.Resources>
+        <!-- Style cho nút bàn phím số -->
+        <Style x:Key="NumPadBtnStyle" TargetType="Button">
+            <Setter Property="Height" Value="65"/>
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Background" Value="#1E1E1E"/>
+            <Setter Property="Foreground" Value="#5B93E8"/>
+            <Setter Property="FontSize" Value="26"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2A2A2A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#333333"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Style cho các nút chức năng tròn (Undo, Erase, Pencil, Hint) -->
+        <Style x:Key="CircleBtnStyle" TargetType="Button">
+            <Setter Property="Width" Value="54"/>
+            <Setter Property="Height" Value="54"/>
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#A0A0A0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="27">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#303030"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#3D3D3D"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Style cho nút chọn độ khó -->
+        <Style x:Key="DiffBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,15,0"/>
+            <Setter Property="Padding" Value="6,2"/>
+        </Style>
+
+        <!-- Style cho nút hành động trên Header (Lịch sử, Đăng xuất) -->
+        <Style x:Key="HeaderActionBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#E0E0E0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#333333"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bdr" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bdr" Property="Background" Value="#333333"/>
+                                <Setter TargetName="bdr" Property="BorderBrush" Value="#4B5563"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bdr" Property="Background" Value="#1E1E1E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ChoiceBtnStyle" TargetType="Button" BasedOn="{StaticResource HeaderActionBtnStyle}">
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Padding" Value="20,18"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="FontSize" Value="17"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="Button">
+                    <Border x:Name="choiceBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="choiceBorder" Property="BorderBrush" Value="#608BCA"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="choiceBorder" Property="BorderBrush" Value="#93C5FD"/><Setter TargetName="choiceBorder" Property="BorderThickness" Value="2"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SetupDiffBtnStyle" TargetType="Button" BasedOn="{StaticResource ChoiceBtnStyle}">
+            <Setter Property="Padding" Value="8,13"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="StartBtnStyle" TargetType="Button" BasedOn="{StaticResource ChoiceBtnStyle}">
+            <Setter Property="Background" Value="#4D70B8"/>
+            <Setter Property="BorderBrush" Value="#688ACA"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Padding" Value="16,14"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="CellBtnStyle" TargetType="Button">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+                <Border x:Name="cellBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="cellBorder" Property="BorderBrush" Value="#4B8DDA"/></Trigger></ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="30,18,30,20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,24" LastChildFill="False">
+            <Button x:Name="btnHome" DockPanel.Dock="Left" Click="ChooseMode_Click" Background="Transparent" BorderThickness="0" Cursor="Hand" Padding="0" ToolTip="Về chọn chế độ">
+                <StackPanel Orientation="Horizontal"><Border Background="#233754" CornerRadius="8" Padding="9" Margin="0,0,12,0"><TextBlock Text="▦" Foreground="#80B5FA" FontSize="25"/></Border><StackPanel VerticalAlignment="Center"><TextBlock Text="SUDOKU VIP" Foreground="#80B5FA" FontSize="18" FontWeight="Bold"/><TextBlock Text="Mỗi ô số, một bước tiến" Foreground="#8D8D94" FontSize="11" Margin="0,3,0,0"/></StackPanel></StackPanel>
+            </Button>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="#1A1A1A" BorderBrush="#2D2D2D" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0"><StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="txtUserAvatar" Text="👤" Foreground="#90B8ED" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBlock x:Name="txtUserDisplayName" Text="Khách" Foreground="#60A5FA" FontWeight="Bold" FontSize="13" VerticalAlignment="Center" Margin="0,0,12,0"/><TextBlock Text="🏆 Kỷ lục: " Foreground="#9CA3AF" FontSize="12" VerticalAlignment="Center"/><TextBlock x:Name="txtUserHighScore" Text="0" Foreground="#FBBF24" FontWeight="Bold" FontSize="13" VerticalAlignment="Center"/>
+                </StackPanel></Border>
+                <Button x:Name="btnSaveGuestScore" Content="⭐ Lưu điểm (Đăng ký)" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" Visibility="Collapsed" Click="BtnSaveGuestScore_Click"/>
+                <Button x:Name="btnHistory" Content="📜 Lịch sử" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnHistory_Click"/>
+                <Button x:Name="btnLogout" Content="🚪 Đăng xuất" Style="{StaticResource HeaderActionBtnStyle}" Click="BtnLogout_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="1">
+            <StackPanel x:Name="ModeSelectionView" Width="580" VerticalAlignment="Center">
+                <TextBlock Text="BƯỚC 1 / 2" Foreground="#60A5FA" FontSize="11" FontWeight="Bold"/>
+                <TextBlock Text="Chọn chế độ chơi" Foreground="White" FontSize="30" FontWeight="SemiBold" Margin="0,10,0,30"/>
+                <Button x:Name="btnModeNormal" Tag="Normal" Click="Mode_Click" Style="{StaticResource ChoiceBtnStyle}" Margin="0,0,0,12" AutomationProperties.Name="Bình thường"><DockPanel><TextBlock Text="▦" Foreground="#8ABAFB" FontSize="24" Margin="0,0,16,0"/><TextBlock Text="›" DockPanel.Dock="Right" Foreground="#848490"/><TextBlock Text="Bình thường" VerticalAlignment="Center"/></DockPanel></Button>
+                <Button x:Name="btnModeVariant" Tag="Variant" Click="Mode_Click" Style="{StaticResource ChoiceBtnStyle}" Margin="0,0,0,12" AutomationProperties.Name="Biến thể"><DockPanel><TextBlock Text="⊞" Foreground="#8ABAFB" FontSize="24" Margin="0,0,16,0"/><TextBlock Text="›" DockPanel.Dock="Right" Foreground="#848490"/><TextBlock Text="Biến thể" VerticalAlignment="Center"/></DockPanel></Button>
+                <Button x:Name="btnModePvp" Tag="PvP" Click="Mode_Click" Style="{StaticResource ChoiceBtnStyle}" AutomationProperties.Name="PvP"><DockPanel><TextBlock Text="⚔" Foreground="#8ABAFB" FontSize="24" Margin="0,0,16,0"/><TextBlock Text="›" DockPanel.Dock="Right" Foreground="#848490"/><TextBlock Text="PvP" VerticalAlignment="Center"/></DockPanel></Button>
+            </StackPanel>
+
+            <StackPanel x:Name="SetupView" Visibility="Collapsed" Width="580" VerticalAlignment="Center">
+                <TextBlock Text="BƯỚC 2 / 2" Foreground="#60A5FA" FontSize="11" FontWeight="Bold" Margin="0,0,0,16"/>
+                <StackPanel Orientation="Horizontal"><Button Content="Chọn chế độ" Click="ChooseMode_Click" Foreground="#A1A1AB" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"/><TextBlock Text="  ›  " Foreground="#676773"/><TextBlock x:Name="txtSetupMode" Text="Biến thể" Foreground="#A1A1AB"/></StackPanel>
+                <TextBlock Text="Thiết lập ván chơi" Foreground="White" FontSize="28" FontWeight="SemiBold" Margin="0,22,0,30"/>
+                <TextBlock Text="Độ khó" Foreground="#D5D5DF" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                <UniformGrid Rows="1" Columns="4" Margin="0,0,-8,0">
+                    <Button x:Name="btnDiffEasy" Content="Dễ" Tag="0" Style="{StaticResource SetupDiffBtnStyle}" Click="Difficulty_Click"/>
+                    <Button x:Name="btnDiffMedium" Content="Trung bình" Tag="1" Style="{StaticResource SetupDiffBtnStyle}" Click="Difficulty_Click"/>
+                    <Button x:Name="btnDiffHard" Content="Khó" Tag="2" Style="{StaticResource SetupDiffBtnStyle}" Click="Difficulty_Click"/>
+                    <Button x:Name="btnDiffExpert" Content="Chuyên gia" Tag="3" Style="{StaticResource SetupDiffBtnStyle}" Click="Difficulty_Click"/>
+                </UniformGrid>
+                <StackPanel x:Name="VariantOptions" Margin="0,30,0,0">
+                    <TextBlock Text="Biến thể Sudoku" Foreground="#D5D5DF" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                    <Button x:Name="btnVariant4x4" Click="Variant4x4_Click" Style="{StaticResource ChoiceBtnStyle}" AutomationProperties.Name="Sudoku 4×4"><DockPanel>
+                        <Border Background="#293448" CornerRadius="8" Width="42" Height="42" Margin="0,0,14,0"><TextBlock Text="⊞" Foreground="#9BC5FF" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                        <TextBlock x:Name="txtVariantCheck" Text="○" Foreground="#777785" FontSize="25" DockPanel.Dock="Right" VerticalAlignment="Center"/>
+                        <StackPanel VerticalAlignment="Center"><TextBlock Text="Sudoku 4×4" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="16 ô · Số 1–4 · Khối 2×2" Foreground="#A4A4B0" FontSize="12" Margin="0,6,0,0"/></StackPanel>
+                    </DockPanel></Button>
+                </StackPanel>
+                <TextBlock x:Name="txtPvpNotice" Text="Thi đấu đối kháng · Sắp ra mắt" Foreground="#A4A4B0" FontSize="13" Margin="0,28,0,0" Visibility="Collapsed"/>
+                <Button x:Name="btnStartGame" Content="Bắt đầu chơi  →" Style="{StaticResource StartBtnStyle}" Click="StartSelectedGame_Click" Margin="0,30,0,0"/>
+                <TextBlock x:Name="txtSetupHint" Text="Chọn biến thể để bắt đầu." Foreground="#9898A5" FontSize="12" HorizontalAlignment="Center" Margin="0,12,0,0"/>
+            </StackPanel>
+
+            <Grid x:Name="GameView" Visibility="Collapsed">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid Margin="0,0,0,18"><StackPanel>
+                    <StackPanel Orientation="Horizontal"><Button x:Name="btnChangeSetup" Content="Biến thể Sudoku" Click="ChangeSetup_Click" Foreground="#A1A1AB" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"/><TextBlock Text="  ›  " Foreground="#676773"/><TextBlock x:Name="txtGameVariant" Text="Mini Sudoku" Foreground="#A1A1AB" FontSize="12"/></StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0"><TextBlock x:Name="txtGameTitle" Text="Sudoku 4×4" Foreground="White" FontSize="24" FontWeight="SemiBold"/><Border Background="#243650" BorderBrush="#344D6D" BorderThickness="1" CornerRadius="5" Padding="8,4" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Name="txtDifficultyBadge" Text="Dễ" Foreground="#9FCAFF" FontSize="11"/></Border></StackPanel>
+                </StackPanel><Button Content="ⓘ  Luật chơi" Click="Rules_Click" Foreground="#A4A4AF" Background="Transparent" BorderThickness="0" Cursor="Hand" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
+                <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="550"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <Border x:Name="BoardBorder" BorderBrush="#596476" BorderThickness="3" Width="550" Height="550" Background="White" HorizontalAlignment="Center" CornerRadius="4"><Grid>
+                            <UniformGrid x:Name="BoardGrid" Rows="9" Columns="9"/>
+                            <UniformGrid x:Name="BlockLines" IsHitTestVisible="False"/>
+                            <Border x:Name="GenerationOverlay" Background="#161B24" Visibility="Collapsed"><TextBlock Text="Đang tạo đề Sudoku…" Foreground="#CBE2FF" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                            <Border x:Name="PauseOverlay" Background="#161B24" Visibility="Collapsed"><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Nghỉ một chút nhé." Foreground="White" FontSize="25" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="Bàn cờ được ẩn và đồng hồ đã dừng." Foreground="#ADB5C2" Margin="0,14,0,22" HorizontalAlignment="Center"/><Button x:Name="btnResumeGame" Content="▶  Tiếp tục chơi" Click="BtnPause_Click" Style="{StaticResource StartBtnStyle}" Width="240"/></StackPanel></Border>
+                        </Grid></Border>
+                        <DockPanel Margin="0,12,0,0"><TextBlock Text="● Ô cho sẵn   " Foreground="#9797A2" FontSize="11"/><TextBlock Text="● Ô bạn điền" Foreground="#609CEC" FontSize="11"/><TextBlock x:Name="txtBoardRule" Text="Khối 2×2 · Số 1–4" DockPanel.Dock="Right" TextAlignment="Right" Foreground="#9797A2" FontSize="11"/></DockPanel>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Width="350" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock Text="🏆  Điểm của bạn" Foreground="#9B9BA4" FontSize="12"/><TextBlock x:Name="txtScore" Text="0" Foreground="White" FontSize="40" FontWeight="SemiBold" Margin="0,8,0,18"/><TextBlock x:Name="txtStatusScore" Visibility="Collapsed"/>
+                        <Grid Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Lỗi" Foreground="#93939E" FontSize="11" Margin="0,0,0,8"/><TextBlock x:Name="txtMistakes" Text="0 / 3" Foreground="White" FontSize="16" FontWeight="SemiBold"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Thời gian" Foreground="#93939E" FontSize="11" Margin="0,0,0,8"/><DockPanel><Button x:Name="btnPause" DockPanel.Dock="Right" Content="⏸" Foreground="White" Background="#262626" BorderThickness="0" Width="32" Height="32" Cursor="Hand" Click="BtnPause_Click"/><TextBlock x:Name="txtTimer" Text="00:00" Foreground="White" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/></DockPanel></StackPanel>
+                        </Grid>
+                        <Border BorderBrush="#2E2E31" BorderThickness="0,1,0,0" Padding="0,18,0,0"><StackPanel><DockPanel Margin="0,0,0,8"><TextBlock Text="Hoàn thành" Foreground="#A4A4AF" FontSize="12"/><TextBlock x:Name="txtProgress" Text="0 / 16 ô" Foreground="#A4A4AF" FontSize="12" TextAlignment="Right"/></DockPanel><ProgressBar x:Name="GameProgress" Minimum="0" Maximum="16" Height="4" Foreground="#5B91D6" Background="#2B2B31" BorderThickness="0"/></StackPanel></Border>
+                        <UniformGrid Rows="1" Columns="4" Margin="0,22,0,22">
+                            <StackPanel><Button x:Name="btnUndo" Content="↺" FontSize="20" ToolTip="Hoàn tác (U / Ctrl+Z)" Style="{StaticResource CircleBtnStyle}" Click="BtnUndo_Click"/><TextBlock Text="Hoàn tác" Foreground="#A5A5AE" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,0"/></StackPanel>
+                            <StackPanel><Button x:Name="btnErase" Content="⌫" FontSize="18" ToolTip="Xóa ô (Delete / Backspace)" Style="{StaticResource CircleBtnStyle}" Click="BtnErase_Click"/><TextBlock Text="Xóa" Foreground="#A5A5AE" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,0"/></StackPanel>
+                            <StackPanel><Button x:Name="btnPencil" Content="✎" FontSize="18" ToolTip="Bật/Tắt Ghi chú (N)" Style="{StaticResource CircleBtnStyle}" Click="BtnPencil_Click"/><TextBlock Text="Ghi chú" Foreground="#A5A5AE" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,0"/></StackPanel>
+                            <StackPanel><Button x:Name="btnHint" Content="💡 3" FontSize="15" ToolTip="Gợi ý (H)" Style="{StaticResource CircleBtnStyle}" Click="BtnHint_Click"/><TextBlock Text="Gợi ý" Foreground="#A5A5AE" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,0"/></StackPanel>
+                        </UniformGrid>
+                        <UniformGrid x:Name="NumberPad" Rows="3" Columns="3" Margin="-4,0,-4,0"/>
+                        <TextBlock x:Name="txtKeyboardTip" Text="Phím 1–4 để điền · N ghi chú · Space tạm dừng" Foreground="#8E8E9B" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,20"/>
+                        <Button x:Name="btnNewGame" Content="⟳  Ván mới" Style="{StaticResource StartBtnStyle}" Click="BtnNewGame_Click"/>
+                        <TextBlock Text="Ô đúng +10 điểm · Ô đã dùng gợi ý +5 điểm&#10;3 lỗi sẽ kết thúc ván." Foreground="#90909B" FontSize="11" TextAlignment="Center" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+        <Border Grid.Row="2" BorderBrush="#242424" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,20,0,0"><DockPanel><TextBlock x:Name="txtFooter" Text="Sudoku VIP · Chơi theo cách của bạn" Foreground="#86868F" FontSize="11"/><TextBlock Text="Đi chậm. Nghĩ kỹ. Tìm đúng số." Foreground="#86868F" FontSize="11" TextAlignment="Right"/></DockPanel></Border>
+    </Grid>
+</Window>

@@ -1,0 +1,6 @@
+.vs/
+.vscode/
+bin/
+obj/
+/Sudoku_Vip/
+*.csproj.user
