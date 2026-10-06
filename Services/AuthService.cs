@@ -1,4 +1,4 @@
-using sudokuvip.Models;
+﻿using sudokuvip.Models;
 
 namespace sudokuvip.Services;
 
@@ -106,6 +106,26 @@ public static class AuthService
         if (player == null) return false;
         int userId = player.UserId;
         var record = new GameHistoryRecord { GameId = gameId,UserId = userId,Difficulty = difficulty,Score = score,DurationSeconds = durationSeconds,Mistakes = mistakes,IsWin = isWin,PlayedAt = DateTime.Now };
+        return await RecordResultAsync(player,record);
+    }
+    public static Task<bool> RecordPvpResultAsync(UserAccount player,sudokuvip.Pvp.Models.PvpMatchResult result,string playerId)
+    {
+        bool first=result.Player1.Id==playerId;
+        if (!first && result.Player2.Id!=playerId) return Task.FromResult(false);
+        var stats=first ? result.P1Stats : result.P2Stats;
+        // Two humans share MatchId, but each owns a different history record.
+        byte[] key=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(result.MatchId+":"+playerId));
+        string difficulty=result.Difficulty switch { 0=>"Dễ",1=>"Trung bình",2=>"Khó",_=>"Chuyên gia" };
+        return RecordResultAsync(player,new GameHistoryRecord {
+            GameId=new Guid(key.AsSpan(0,16)),UserId=player.UserId,Difficulty="PvP · "+difficulty,IsPvp=true,
+            MatchId=result.MatchId,Opponent=(first ? result.Player2 : result.Player1).DisplayName,
+            EloAfter=first ? result.P1EloAfter : result.P2EloAfter,Score=stats.Score,DurationSeconds=stats.DurationSeconds,
+            Mistakes=stats.Mistakes,IsWin=result.WinnerId==playerId,PlayedAt=result.FinishedAtUtc.ToLocalTime() });
+    }
+    private static async Task<bool> RecordResultAsync(UserAccount player,GameHistoryRecord record)
+    {
+        int userId=record.UserId;
+        Guid gameId=record.GameId;
         await Operations.WaitAsync();
         try
         {
@@ -143,6 +163,9 @@ public static class AuthService
     }
     public static void ApplyStatistics(UserAccount player,IReadOnlyCollection<GameHistoryRecord> history)
     {
+        var pvp=history.Where(h=>h.IsPvp).ToList();
+        player.PvpGames=pvp.Count; player.PvpWins=pvp.Count(h=>h.IsWin);
+        player.EloRating=pvp.OrderByDescending(h=>h.PlayedAt).ThenByDescending(h=>h.HistoryId).FirstOrDefault()?.EloAfter ?? 1200;
         player.TotalGames = history.Count; player.TotalWins = history.Count(h => h.IsWin);
         player.TotalScore = history.Sum(h => h.Score); player.HighScore = history.Count == 0 ? 0 : history.Max(h => h.Score);
     }

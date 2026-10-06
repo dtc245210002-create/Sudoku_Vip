@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -15,6 +15,9 @@ namespace sudokuvip.Pvp.Views
         private int _searchSeconds = 0;
         private PvpRoomInfo? _currentRoom;
         private bool _isLocalReady = false;
+        private bool _closed;
+        private bool _connecting;
+        private bool _inArena;
 
         public PvpLobbyWindow()
         {
@@ -24,18 +27,65 @@ namespace sudokuvip.Pvp.Views
             _searchTimer.Tick += SearchTimer_Tick;
 
             UpdateUserProfileUI();
+            if (_manager.IsReady)
+            {
+                txtServerHost.Text=_manager.ServerHost; txtServerPort.Text=_manager.ServerPort.ToString();
+                txtConnectionStatus.Text=$"Đã kết nối {_manager.ServerHost}:{_manager.ServerPort}.";
+                MatchOptions.IsEnabled=true;
+            }
             WireEvents();
 
-            Loaded += async (s, e) =>
-            {
-                bool connected = await _manager.EnsureConnectedAsync();
-                if (!connected)
-                {
-                    MessageBox.Show("Không thể khởi động kết nối PvP. Vui lòng thử lại.", "Lỗi kết nối", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
-                UpdateUserProfileUI();
-            };
+            Loaded += (s,e) => { MatchOptions.IsEnabled=_manager.IsReady; UpdateUserProfileUI(); };
         }
+        private bool ReadPort(out int port)
+        {
+            if (int.TryParse(txtServerPort.Text,out port) && port is >0 and <=65535) return true;
+            txtConnectionStatus.Text="Cổng phải là số từ 1 đến 65535."; return false;
+        }
+        private async System.Threading.Tasks.Task ConnectAsync(bool hostServer,bool lan)
+        {
+            if (_closed || _connecting || _inArena || !ReadPort(out int port)) return;
+            string host=txtServerHost.Text.Trim();
+            if (!hostServer && host.Length==0) { txtConnectionStatus.Text="Nhập địa chỉ máy chủ."; return; }
+            _connecting=true; MatchOptions.IsEnabled=false;
+            btnConnect.IsEnabled=btnHostLan.IsEnabled=btnHostLocal.IsEnabled=false;
+            txtConnectionStatus.Text="Đang kết nối…";
+            try
+            {
+                if (hostServer)
+                {
+                    if (_manager.Server.IsRunning && (_manager.Server.Port!=port || (lan && !_manager.Server.ListenAddress.Equals(System.Net.IPAddress.Any))))
+                    { txtConnectionStatus.Text="Máy chủ đang chạy với cấu hình khác; đóng ứng dụng trước khi đổi cổng hoặc bật LAN."; return; }
+                    if (!_manager.Server.IsRunning && !_manager.Server.Start(port,lan ? System.Net.IPAddress.Any : System.Net.IPAddress.Loopback))
+                    { txtConnectionStatus.Text="Không tạo được máy chủ; cổng có thể đang được sử dụng."; return; }
+                    host="127.0.0.1"; txtServerHost.Text=host;
+                }
+                bool connected=await _manager.EnsureConnectedAsync(host,port);
+                if (_closed) { _manager.LeaveLobby(); return; }
+                MatchOptions.IsEnabled=connected;
+                txtConnectionStatus.Text=connected ? (lan ? $"Máy chủ LAN: cổng {port}. Máy khác nhập IP của máy này và cùng cổng." : $"Đã kết nối {host}:{port}.") : "Không kết nối được. Kiểm tra địa chỉ/cổng hoặc chọn tạo máy chủ.";
+                UpdateUserProfileUI();
+                if (connected && hostServer && !lan) BtnPracticeAi_Click(this,new RoutedEventArgs());
+            }
+            finally
+            {
+                _connecting=false;
+                if (!_closed) btnConnect.IsEnabled=btnHostLan.IsEnabled=btnHostLocal.IsEnabled=true;
+            }
+        }
+        private async void BtnConnect_Click(object sender,RoutedEventArgs e) => await ConnectAsync(false,false);
+        private async void BtnHostLan_Click(object sender,RoutedEventArgs e) => await ConnectAsync(true,true);
+        private async void BtnHostLocal_Click(object sender,RoutedEventArgs e) => await ConnectAsync(true,false);
+        private async void BtnRetrySave_Click(object sender,RoutedEventArgs e)
+        { await _manager.RetryPendingResultsAsync(); if (!_closed) UpdateUserProfileUI(); }
+        private void HandleDisconnected() => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_closed) return;
+            MatchOptions.IsEnabled=false; _searchTimer.Stop();
+            borderSearching.Visibility=Visibility.Collapsed; btnFindMatch.Visibility=Visibility.Visible; btnCancelFindMatch.Visibility=Visibility.Collapsed;
+            _currentRoom=null; subPanelInRoom.Visibility=Visibility.Collapsed; subPanelRoomEntry.Visibility=Visibility.Visible;
+            txtConnectionStatus.Text="Đã ngắt kết nối. Kết nối lại để tiếp tục.";
+        }));
 
         private void WireEvents()
         {
@@ -43,6 +93,8 @@ namespace sudokuvip.Pvp.Views
             _manager.OnRoomUpdated += HandleRoomUpdated;
             _manager.OnMatchStarted += HandleMatchStarted;
             _manager.OnError += HandleError;
+            _manager.OnDisconnected += HandleDisconnected;
+            AuthService.CurrentUserChanged += HandleProfileChanged;
         }
 
         private void UnwireEvents()
@@ -51,7 +103,11 @@ namespace sudokuvip.Pvp.Views
             _manager.OnRoomUpdated -= HandleRoomUpdated;
             _manager.OnMatchStarted -= HandleMatchStarted;
             _manager.OnError -= HandleError;
+            _manager.OnDisconnected -= HandleDisconnected;
+            AuthService.CurrentUserChanged -= HandleProfileChanged;
         }
+
+        private void HandleProfileChanged() => Dispatcher.BeginInvoke(new Action(() => { if (!_closed) UpdateUserProfileUI(); }));
 
         private void UpdateUserProfileUI()
         {
@@ -141,10 +197,11 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleQueueStatus(string status)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                // Can update UI status if desired
-            });
+                if (_closed) return;
+                txtConnectionStatus.Text=status;
+            }));
         }
 
         #endregion
@@ -170,8 +227,9 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleRoomUpdated(PvpRoomInfo room)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
+                if (_closed || _inArena) return;
                 _currentRoom = room;
                 subPanelRoomEntry.Visibility = Visibility.Collapsed;
                 subPanelInRoom.Visibility = Visibility.Visible;
@@ -222,7 +280,7 @@ namespace sudokuvip.Pvp.Views
 
                 btnToggleReady.Content = _isLocalReady ? "Hủy Sẵn Sàng" : "Sẵn Sàng!";
                 btnToggleReady.Background = _isLocalReady ? new SolidColorBrush(Color.FromRgb(239, 68, 68)) : new SolidColorBrush(Color.FromRgb(16, 185, 129));
-            });
+            }));
         }
 
         private void BtnToggleReady_Click(object sender, RoutedEventArgs e)
@@ -245,8 +303,10 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleMatchStarted(MsgStartMatchPayload match)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
+                if (_closed || _inArena) { _ = _manager.Surrender(match.MatchId); return; }
+                _inArena=true;
                 _searchTimer.Stop();
                 borderSearching.Visibility = Visibility.Collapsed;
                 btnFindMatch.Visibility = Visibility.Visible;
@@ -259,8 +319,11 @@ namespace sudokuvip.Pvp.Views
 
                 Hide();
                 arena.ShowDialog();
+                _inArena=false;
+                if (_closed) return;
                 Show();
                 UpdateUserProfileUI();
+                _ = _manager.LeaveRoom();
 
                 // If was in custom room, reset room view
                 if (_currentRoom != null)
@@ -269,23 +332,28 @@ namespace sudokuvip.Pvp.Views
                     subPanelRoomEntry.Visibility = Visibility.Visible;
                     _currentRoom = null;
                 }
-            });
+            }));
         }
 
         private void HandleError(string err)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                MessageBox.Show(err, "Thông báo PvP", MessageBoxButton.OK, MessageBoxImage.Information);
-            });
+                if (_closed) return;
+                txtConnectionStatus.Text=err;
+                _searchTimer.Stop();
+                borderSearching.Visibility=Visibility.Collapsed; btnFindMatch.Visibility=Visibility.Visible; btnCancelFindMatch.Visibility=Visibility.Collapsed;
+            }));
         }
 
         #endregion
 
         protected override void OnClosed(EventArgs e)
         {
+            _closed=true;
             _searchTimer.Stop();
             UnwireEvents();
+            _manager.LeaveLobby();
             base.OnClosed(e);
         }
     }

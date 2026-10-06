@@ -1,4 +1,4 @@
--- Manual bootstrap only. Select an explicitly created empty database before running.
+﻿-- Manual bootstrap only. Select an explicitly created empty database before running.
 -- Do not execute this automatically on application startup.
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
@@ -33,3 +33,5 @@ BEGIN
 END;
 COMMIT;
 -- Next, run migrations/001_game_identity.sql in this same selected database.
+
+-- Then run migrations/002_pvp_history.sql.

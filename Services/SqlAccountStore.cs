@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using sudokuvip.Database;
 using sudokuvip.Models;
 using System.Data;
@@ -9,6 +9,15 @@ public sealed class SqlAccountStore : IAccountStore
 {
     private static SqlCommand Command(string sql,SqlConnection conn,SqlTransaction? transaction = null)
         => new(sql,conn,transaction) { CommandTimeout = 10 };
+    private static async Task<bool> HasPvpSchemaAsync(SqlConnection conn,SqlTransaction? tx = null)
+    {
+        using var cmd=Command(@"SELECT CASE WHEN COL_LENGTH('dbo.Users','EloRating') IS NOT NULL
+            AND COL_LENGTH('dbo.Users','PvpGames') IS NOT NULL AND COL_LENGTH('dbo.Users','PvpWins') IS NOT NULL
+            AND COL_LENGTH('dbo.GameHistory','IsPvp') IS NOT NULL AND COL_LENGTH('dbo.GameHistory','MatchId') IS NOT NULL
+            AND COL_LENGTH('dbo.GameHistory','Opponent') IS NOT NULL AND COL_LENGTH('dbo.GameHistory','EloAfter') IS NOT NULL
+            THEN 1 ELSE 0 END",conn,tx);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync())==1;
+    }
     public async Task<bool> UsernameExistsAsync(string username,CancellationToken cancellationToken)
     {
         using var conn = DatabaseHelper.GetConnection(); await conn.OpenAsync(cancellationToken);
@@ -39,8 +48,9 @@ public sealed class SqlAccountStore : IAccountStore
                 if (!await reader.ReadAsync()) throw new InvalidOperationException();
                 user.UserId = reader.GetInt32(0); user.CreatedAt = reader.GetDateTime(1);
             }
-            foreach (var record in history) await InsertHistoryAsync(conn,tx,record,user.UserId);
-            await RecalculateStatisticsAsync(conn,tx,user.UserId);
+            bool pvpSchema=await HasPvpSchemaAsync(conn,tx);
+            foreach (var record in history) await InsertHistoryAsync(conn,tx,record,user.UserId,pvpSchema);
+            await RecalculateStatisticsAsync(conn,tx,user.UserId,pvpSchema);
             await tx.CommitAsync();
             AuthService.ApplyStatistics(user,history.ToList());
             return user;
@@ -50,13 +60,15 @@ public sealed class SqlAccountStore : IAccountStore
     public async Task<(UserAccount User,string Hash)?> FindAccountAsync(string username)
     {
         using var conn = DatabaseHelper.GetConnection(); await conn.OpenAsync();
+        bool pvpSchema=await HasPvpSchemaAsync(conn);
         using var cmd = Command(@"SELECT UserId,Username,DisplayName,ISNULL(Avatar,N'👤'),CreatedAt,
-            HighScore,TotalScore,TotalGames,TotalWins,PasswordHash FROM dbo.Users WHERE LOWER(Username)=LOWER(@Username)",conn);
+            HighScore,TotalScore,TotalGames,TotalWins,PasswordHash" + (pvpSchema ? ",EloRating,PvpGames,PvpWins" : "") +
+            " FROM dbo.Users WHERE LOWER(Username)=LOWER(@Username)",conn);
         cmd.Parameters.Add("@Username",SqlDbType.NVarChar,50).Value = username;
         using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync()) return null;
         return (new UserAccount { UserId=reader.GetInt32(0),Username=reader.GetString(1),DisplayName=reader.GetString(2),Avatar=reader.GetString(3),CreatedAt=reader.GetDateTime(4),
-            HighScore=reader.GetInt32(5),TotalScore=reader.GetInt32(6),TotalGames=reader.GetInt32(7),TotalWins=reader.GetInt32(8) },reader.GetString(9));
+            HighScore=reader.GetInt32(5),TotalScore=reader.GetInt32(6),TotalGames=reader.GetInt32(7),TotalWins=reader.GetInt32(8),EloRating=pvpSchema ? reader.GetInt32(10) : 1200,PvpGames=pvpSchema ? reader.GetInt32(11) : 0,PvpWins=pvpSchema ? reader.GetInt32(12) : 0 },reader.GetString(9));
     }
     public async Task UpgradePasswordAsync(int userId,string oldHash,string newHash)
     {
@@ -71,19 +83,22 @@ public sealed class SqlAccountStore : IAccountStore
     {
         using var conn = DatabaseHelper.GetConnection(); await conn.OpenAsync();
         using var tx = (SqlTransaction)await conn.BeginTransactionAsync();
+        bool pvpSchema=await HasPvpSchemaAsync(conn,tx);
         await LockAccountAsync(conn,tx,record.UserId);
         using var check = Command("SELECT UserId FROM dbo.GameHistory WITH (UPDLOCK,HOLDLOCK) WHERE GameId=@GameId",conn,tx);
         check.Parameters.Add("@GameId",SqlDbType.UniqueIdentifier).Value = record.GameId;
         object? existing = await check.ExecuteScalarAsync();
-        if (existing == null) await InsertHistoryAsync(conn,tx,record,record.UserId);
+        if (existing == null) await InsertHistoryAsync(conn,tx,record,record.UserId,pvpSchema);
         else if (Convert.ToInt32(existing) != record.UserId) throw new InvalidOperationException("Game identity mismatch.");
-        await RecalculateStatisticsAsync(conn,tx,record.UserId);
+        await RecalculateStatisticsAsync(conn,tx,record.UserId,pvpSchema);
         await tx.CommitAsync();
     }
-    private static async Task InsertHistoryAsync(SqlConnection conn,SqlTransaction tx,GameHistoryRecord record,int userId)
+    private static async Task InsertHistoryAsync(SqlConnection conn,SqlTransaction tx,GameHistoryRecord record,int userId,bool pvpSchema)
     {
-        using var cmd = Command(@"INSERT INTO dbo.GameHistory (GameId,UserId,Difficulty,Score,DurationSeconds,Mistakes,IsWin,PlayedAt)
-            VALUES (@GameId,@UserId,@Difficulty,@Score,@Duration,@Mistakes,@Win,@PlayedAt)",conn,tx);
+        if (record.IsPvp && !pvpSchema) throw new InvalidOperationException("Apply Database/migrations/002_pvp_history.sql before saving PvP results.");
+        using var cmd = Command("INSERT INTO dbo.GameHistory (GameId,UserId,Difficulty,Score,DurationSeconds,Mistakes,IsWin,PlayedAt" +
+            (pvpSchema ? ",IsPvp,MatchId,Opponent,EloAfter" : "") + ") VALUES (@GameId,@UserId,@Difficulty,@Score,@Duration,@Mistakes,@Win,@PlayedAt" +
+            (pvpSchema ? ",@Pvp,@Match,@Opponent,@Elo" : "") + ")",conn,tx);
         cmd.Parameters.Add("@GameId",SqlDbType.UniqueIdentifier).Value = record.GameId;
         cmd.Parameters.Add("@UserId",SqlDbType.Int).Value = userId;
         cmd.Parameters.Add("@Difficulty",SqlDbType.NVarChar,30).Value = record.Difficulty;
@@ -92,12 +107,20 @@ public sealed class SqlAccountStore : IAccountStore
         cmd.Parameters.Add("@Mistakes",SqlDbType.Int).Value = record.Mistakes;
         cmd.Parameters.Add("@Win",SqlDbType.Bit).Value = record.IsWin;
         cmd.Parameters.Add("@PlayedAt",SqlDbType.DateTime2).Value = record.PlayedAt;
+        cmd.Parameters.Add("@Pvp",SqlDbType.Bit).Value=record.IsPvp;
+        cmd.Parameters.Add("@Match",SqlDbType.NVarChar,64).Value=record.MatchId;
+        cmd.Parameters.Add("@Opponent",SqlDbType.NVarChar,100).Value=record.Opponent;
+        cmd.Parameters.Add("@Elo",SqlDbType.Int).Value=record.EloAfter;
         await cmd.ExecuteNonQueryAsync();
     }
-    private static async Task RecalculateStatisticsAsync(SqlConnection conn,SqlTransaction tx,int userId)
+    private static async Task RecalculateStatisticsAsync(SqlConnection conn,SqlTransaction tx,int userId,bool pvpSchema)
     {
         await LockAccountAsync(conn,tx,userId);
-        using var cmd = Command(@"UPDATE u SET TotalGames=h.Games,TotalWins=h.Wins,TotalScore=h.Score,HighScore=h.High
+        string pvpUpdates=pvpSchema ? @",
+            PvpGames=(SELECT COUNT(*) FROM dbo.GameHistory WHERE UserId=@UserId AND IsPvp=1),
+            PvpWins=(SELECT COUNT(*) FROM dbo.GameHistory WHERE UserId=@UserId AND IsPvp=1 AND IsWin=1),
+            EloRating=COALESCE((SELECT TOP(1) EloAfter FROM dbo.GameHistory WHERE UserId=@UserId AND IsPvp=1 ORDER BY PlayedAt DESC,HistoryId DESC),1200)" : "";
+        using var cmd = Command(@"UPDATE u SET TotalGames=h.Games,TotalWins=h.Wins,TotalScore=h.Score,HighScore=h.High" + pvpUpdates + @"
             FROM dbo.Users u CROSS APPLY (SELECT COUNT(*) Games,COALESCE(SUM(CASE WHEN IsWin=1 THEN 1 ELSE 0 END),0) Wins,
             COALESCE(SUM(Score),0) Score,COALESCE(MAX(Score),0) High FROM dbo.GameHistory WHERE UserId=@UserId) h WHERE u.UserId=@UserId",conn,tx);
         cmd.Parameters.Add("@UserId",SqlDbType.Int).Value = userId;
@@ -112,13 +135,14 @@ public sealed class SqlAccountStore : IAccountStore
     public async Task<List<GameHistoryRecord>> GetHistoryAsync(int userId)
     {
         using var conn = DatabaseHelper.GetConnection(); await conn.OpenAsync();
-        using var cmd = Command(@"SELECT HistoryId,UserId,Difficulty,Score,DurationSeconds,Mistakes,IsWin,PlayedAt,GameId
-            FROM dbo.GameHistory WHERE UserId=@UserId ORDER BY PlayedAt DESC",conn);
+        bool pvpSchema=await HasPvpSchemaAsync(conn);
+        using var cmd = Command(@"SELECT HistoryId,UserId,Difficulty,Score,DurationSeconds,Mistakes,IsWin,PlayedAt,GameId" +
+            (pvpSchema ? ",IsPvp,MatchId,Opponent,EloAfter" : "") + " FROM dbo.GameHistory WHERE UserId=@UserId ORDER BY PlayedAt DESC",conn);
         cmd.Parameters.Add("@UserId",SqlDbType.Int).Value = userId;
         using var reader = await cmd.ExecuteReaderAsync();
         var history = new List<GameHistoryRecord>();
         while (await reader.ReadAsync()) history.Add(new() { HistoryId=reader.GetInt32(0),UserId=reader.GetInt32(1),Difficulty=reader.GetString(2),Score=reader.GetInt32(3),
-            DurationSeconds=reader.GetInt32(4),Mistakes=reader.GetInt32(5),IsWin=reader.GetBoolean(6),PlayedAt=reader.GetDateTime(7),GameId=reader.GetGuid(8) });
+            DurationSeconds=reader.GetInt32(4),Mistakes=reader.GetInt32(5),IsWin=reader.GetBoolean(6),PlayedAt=reader.GetDateTime(7),GameId=reader.GetGuid(8),IsPvp=pvpSchema && reader.GetBoolean(9),MatchId=pvpSchema ? reader.GetString(10) : "",Opponent=pvpSchema ? reader.GetString(11) : "",EloAfter=pvpSchema ? reader.GetInt32(12) : 1200 });
         return history;
     }
 }

@@ -1,8 +1,8 @@
-<Window x:Class="sudokuvip.HistoryWindow"
+﻿<Window x:Class="sudokuvip.HistoryWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Sudoku VIP - Lịch sử Đấu &amp; Thành tích" 
-        Height="620" Width="820"
+        Height="620" Width="980"
         WindowStartupLocation="CenterOwner"
         Background="#121212"
         Foreground="#E0E0E0">
@@ -122,6 +122,8 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Thời gian" Binding="{Binding FormattedPlayedAt}" Width="150"/>
                             <DataGridTextColumn Header="Độ khó" Binding="{Binding Difficulty}" Width="110"/>
+                            <DataGridTextColumn Header="Đối thủ" Binding="{Binding Opponent}" Width="110"/>
+                            <DataGridTextColumn Header="Elo" Binding="{Binding EloFormatted}" Width="60"/>
                             <DataGridTextColumn Header="Điểm số" Binding="{Binding Score}" Width="90"/>
                             <DataGridTextColumn Header="Thời lượng" Binding="{Binding DurationFormatted}" Width="100"/>
                             <DataGridTextColumn Header="Số lỗi" Binding="{Binding Mistakes}" Width="80"/>

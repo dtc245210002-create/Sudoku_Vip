@@ -38,6 +38,11 @@ public partial class MainWindow
     {
         if (sender is not Button button || !Enum.TryParse(button.Tag?.ToString(), out GameMode mode) ||
             _currentModel.SaveState == ResultSaveState.Saving) return;
+        if (mode == GameMode.PvP)
+        {
+            BtnPvp_Click(sender, e);
+            return;
+        }
         _currentMode = mode;
         _pendingDifficulty = 0;
         _variantSelected = false;

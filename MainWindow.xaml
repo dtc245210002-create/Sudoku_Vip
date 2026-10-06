@@ -166,8 +166,6 @@
                 </StackPanel></Border>
                 <Button x:Name="btnSaveGuestScore" Content="⭐ Lưu điểm (Đăng ký)" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" Visibility="Collapsed" Click="BtnSaveGuestScore_Click"/>
 
-                <!-- Nút Đấu trường PvP -->
-                <Button x:Name="btnPvp" Content="⚔️ Đấu Trường PvP" Style="{StaticResource HeaderActionBtnStyle}" Background="#1E3A8A" Foreground="#93C5FD" BorderBrush="#3B82F6" FontWeight="Bold" Click="BtnPvp_Click"/>
 
                 <!-- Nút Lịch sử thi đấu -->
 

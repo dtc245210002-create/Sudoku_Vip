@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,6 +15,7 @@ namespace sudokuvip.Pvp.Views
     public partial class PvpArenaWindow : Window
     {
         private readonly MsgStartMatchPayload _matchData;
+        private readonly string _localPlayerId;
         private readonly PvpManager _manager = PvpManager.Instance;
         private readonly Button[,] _cells = new Button[9, 9];
         private readonly Border[,] _miniCells = new Border[9, 9];
@@ -23,7 +24,9 @@ namespace sudokuvip.Pvp.Views
         private readonly int[,] _solution = new int[9, 9];
         private readonly bool[,] _isFixed = new bool[9, 9];
         private readonly HashSet<int>[,] _notes = new HashSet<int>[9, 9];
-        private readonly Stack<(int r, int c, int oldVal, HashSet<int> oldNotes, int oldMistakes)> _undoStack = new();
+        private readonly sudokuvip.Pvp.Engine.PvpBoardState _state;
+        private long _opponentSequence;
+        private bool _closed;
 
         private int _selectedRow = -1;
         private int _selectedCol = -1;
@@ -43,6 +46,12 @@ namespace sudokuvip.Pvp.Views
         {
             InitializeComponent();
             _matchData = matchData;
+            _localPlayerId=_manager.LocalPlayer?.Id ?? "";
+            _state = new(matchData.Board);
+            _board = _state.Model.CurrentBoard;
+            _solution = _state.Model.SolutionBoard;
+            _isFixed = _state.Model.IsFixed;
+            _notes = _state.Model.Notes;
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += (s, e) =>
@@ -108,6 +117,8 @@ namespace sudokuvip.Pvp.Views
             _manager.OnOpponentProgress += HandleOpponentProgress;
             _manager.OnOpponentEmote += HandleOpponentEmote;
             _manager.OnMatchOver += HandleMatchOver;
+            _manager.OnLocalProgress += HandleLocalProgress;
+            _manager.OnDisconnected += HandleDisconnected;
         }
 
         private void UnwirePvpEvents()
@@ -115,6 +126,8 @@ namespace sudokuvip.Pvp.Views
             _manager.OnOpponentProgress -= HandleOpponentProgress;
             _manager.OnOpponentEmote -= HandleOpponentEmote;
             _manager.OnMatchOver -= HandleMatchOver;
+            _manager.OnLocalProgress -= HandleLocalProgress;
+            _manager.OnDisconnected -= HandleDisconnected;
         }
 
         #region BOARD INITIALIZATION
@@ -280,52 +293,31 @@ namespace sudokuvip.Pvp.Views
 
         #region GAME ACTIONS & MOVE APPLICATION
 
-        private void ApplyNumber(int val)
+        private void ApplyNumber(int val) => ApplyOperation(_isPencilMode ? PvpOperation.Note : PvpOperation.Move,val);
+        private void ApplyOperation(PvpOperation operation,int value=0)
         {
-            if (_isFinished || _selectedRow < 0 || _selectedCol < 0 || _isFixed[_selectedRow, _selectedCol]) return;
-
-            int r = _selectedRow, c = _selectedCol;
-            int oldVal = _board[r, c];
-
-            if (_isPencilMode)
-            {
-                if (_board[r, c] != 0) return;
-                _undoStack.Push((r, c, oldVal, new HashSet<int>(_notes[r, c]), _myMistakes));
-                if (!_notes[r, c].Remove(val)) _notes[r, c].Add(val);
-                RenderMainCell(r, c);
-                return;
-            }
-
-            if (oldVal == val) return; // No-op
-
-            _undoStack.Push((r, c, oldVal, new HashSet<int>(_notes[r, c]), _myMistakes));
-            _notes[r, c].Clear();
-            _board[r, c] = val;
-
-            bool isCorrect = val == _solution[r, c];
-            if (!isCorrect)
-            {
-                _myMistakes++;
-                txtP1Hearts.Text = GetHearts(_myMistakes);
-            }
-            else
-            {
-                if (oldVal != _solution[r, c])
-                {
-                    _myFilled++;
-                    _myScore += 10;
-                }
-            }
-
-            RenderMainCell(r, c);
-            HighlightSelection();
-            txtP1ProgressText.Text = $"{_myFilled}/{_totalEmpty}";
-            UpdateTugOfWar();
-
-            // Send Move Progress to Server
-            int cellIdx = r * 9 + c;
-            _ = _manager.SendProgress(_matchData.MatchId, cellIdx, isCorrect, _myMistakes, _myFilled, _totalEmpty, _myScore);
+            if (_closed || _isFinished || _selectedRow < 0 || _selectedCol < 0) return;
+            var move = new MsgMovePayload { MatchId=_matchData.MatchId,Sequence=_state.Sequence+1,
+                Operation=operation,CellIndex=_selectedRow*9+_selectedCol,Value=value };
+            if (!_state.Apply(move,out int cell)) return;
+            _myFilled=_state.Filled; _myScore=_state.Model.Score; _myMistakes=_state.Model.Mistakes;
+            if (cell>=0 && cell<81) { _selectedRow=cell/9; _selectedCol=cell%9; RenderMainCell(cell/9,cell%9); }
+            txtP1Hearts.Text=GetHearts(_myMistakes);
+            txtP1ProgressText.Text=$"{_myFilled}/{_totalEmpty}";
+            HighlightSelection(); UpdateTugOfWar();
+            _ = _manager.SendMove(move);
         }
+        private void HandleLocalProgress(MsgProgressPayload progress)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_closed || _isFinished || progress.MatchId!=_matchData.MatchId || progress.Sequence!=_state.Sequence) return;
+                if (progress.Score!=_myScore || progress.Mistakes!=_myMistakes || progress.FilledCorrect!=_myFilled)
+                { _timer.Stop(); BoardGrid.IsEnabled=false; _isFinished=true; _ = _manager.Surrender(_matchData.MatchId); Close(); }
+            }));
+        }
+        private void HandleDisconnected() => Dispatcher.BeginInvoke(new Action(() =>
+        { if (_closed) return; _isFinished=true; _timer.Stop(); Close(); }));
 
         private void Number_Click(object sender, RoutedEventArgs e)
         {
@@ -335,45 +327,12 @@ namespace sudokuvip.Pvp.Views
             }
         }
 
-        private void BtnErase_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isFinished || _selectedRow < 0 || _selectedCol < 0 || _isFixed[_selectedRow, _selectedCol]) return;
-            int r = _selectedRow, c = _selectedCol;
-            if (_board[r, c] == 0 && _notes[r, c].Count == 0) return;
-
-            _undoStack.Push((r, c, _board[r, c], new HashSet<int>(_notes[r, c]), _myMistakes));
-            if (_board[r, c] == _solution[r, c]) _myFilled = Math.Max(0, _myFilled - 1);
-
-            _board[r, c] = 0;
-            _notes[r, c].Clear();
-            RenderMainCell(r, c);
-            HighlightSelection();
-            txtP1ProgressText.Text = $"{_myFilled}/{_totalEmpty}";
-            UpdateTugOfWar();
-        }
-
-        private void BtnUndo_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isFinished || _undoStack.Count == 0) return;
-            var (r, c, oldVal, oldNotes, oldMistakes) = _undoStack.Pop();
-
-            if (_board[r, c] == _solution[r, c] && oldVal != _solution[r, c]) _myFilled = Math.Max(0, _myFilled - 1);
-            else if (_board[r, c] != _solution[r, c] && oldVal == _solution[r, c]) _myFilled++;
-
-            _board[r, c] = oldVal;
-            _notes[r, c] = new HashSet<int>(oldNotes);
-            _myMistakes = oldMistakes;
-            txtP1Hearts.Text = GetHearts(_myMistakes);
-
-            _selectedRow = r; _selectedCol = c;
-            RenderMainCell(r, c);
-            HighlightSelection();
-            txtP1ProgressText.Text = $"{_myFilled}/{_totalEmpty}";
-            UpdateTugOfWar();
-        }
+        private void BtnErase_Click(object sender, RoutedEventArgs e) => ApplyOperation(PvpOperation.Erase);
+        private void BtnUndo_Click(object sender, RoutedEventArgs e) => ApplyOperation(PvpOperation.Undo);
 
         private void BtnPencil_Click(object sender, RoutedEventArgs e)
         {
+            if (_closed || _isFinished || _state.Finished) return;
             _isPencilMode = !_isPencilMode;
             btnPencil.Background = _isPencilMode ? new SolidColorBrush(Color.FromRgb(37, 99, 235)) : new SolidColorBrush(Color.FromRgb(34, 34, 34));
             btnPencil.Foreground = _isPencilMode ? Brushes.White : new SolidColorBrush(Color.FromRgb(209, 213, 219));
@@ -409,9 +368,10 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleOpponentProgress(MsgProgressPayload prog)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_isFinished) return;
+                if (_closed || _isFinished || prog.MatchId!=_matchData.MatchId || prog.Sequence<=_opponentSequence) return;
+                _opponentSequence=prog.Sequence;
                 _oppFilled = prog.FilledCorrect;
                 _oppMistakes = prog.Mistakes;
                 txtOppMistakes.Text = $"{_oppMistakes} / 3";
@@ -419,18 +379,13 @@ namespace sudokuvip.Pvp.Views
                 txtOppScore.Text = prog.Score.ToString();
                 txtP2ProgressText.Text = $"{_oppFilled}/{_totalEmpty}";
 
-                // Update Mini Board
-                int r = prog.CellIndex / 9;
-                int c = prog.CellIndex % 9;
-                if (r >= 0 && r < 9 && c >= 0 && c < 9)
-                {
-                    _miniCells[r, c].Background = prog.IsCorrect
-                        ? new SolidColorBrush(Color.FromRgb(34, 197, 94))  // Green
-                        : new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
-                }
+                if (prog.CellStates.Length==81)
+                for (int i=0;i<81;i++)
+                    _miniCells[i/9,i%9].Background = new SolidColorBrush(prog.CellStates[i] switch {
+                        1=>Color.FromRgb(34,197,94),2=>Color.FromRgb(239,68,68),3=>Color.FromRgb(55,65,81),_=>Color.FromRgb(20,20,20) });
 
                 UpdateTugOfWar();
-            });
+            }));
         }
 
         private void Emote_Click(object sender, RoutedEventArgs e)
@@ -445,10 +400,11 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleOpponentEmote(string emote)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
+                if (_closed || _isFinished) return;
                 PlayEmoteAnimation(txtP2FloatingEmote, transP2Emote, emote);
-            });
+            }));
         }
 
         private void PlayEmoteAnimation(TextBlock target, TranslateTransform trans, string emote)
@@ -473,20 +429,20 @@ namespace sudokuvip.Pvp.Views
 
         private void HandleMatchOver(PvpMatchResult result)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_isFinished) return;
+                if (_closed || _isFinished || result.MatchId!=_matchData.MatchId) return;
                 _isFinished = true;
                 _timer.Stop();
                 BoardGrid.IsEnabled = false;
 
-                var dlg = new PvpResultDialog(result, _manager.LocalPlayer?.Id ?? "")
+                var dlg = new PvpResultDialog(result, _localPlayerId)
                 {
                     Owner = this
                 };
                 dlg.ShowDialog();
                 Close();
-            });
+            }));
         }
 
         #endregion
@@ -523,6 +479,8 @@ namespace sudokuvip.Pvp.Views
 
         protected override void OnClosed(EventArgs e)
         {
+            _closed=true;
+            if (!_isFinished) _ = _manager.Surrender(_matchData.MatchId);
             _timer.Stop();
             UnwirePvpEvents();
             base.OnClosed(e);

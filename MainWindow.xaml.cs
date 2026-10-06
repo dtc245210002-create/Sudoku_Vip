@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -401,6 +401,7 @@ namespace sudokuvip
             _closed = true; ++_generationVersion;
             _gameTimer.Stop(); _gameTimer.Tick -= GameTimer_Tick;
             AuthService.CurrentUserChanged -= UpdateUserProfileUI;
+            Pvp.PvpManager.Instance.Dispose();
             base.OnClosed(e);
         }
 
@@ -673,13 +674,15 @@ namespace sudokuvip
             if (!ReferenceEquals(_gamePlayer,AuthService.CurrentUser)) ShowModeSelection();
         }
 
+        private Action<Pvp.Views.PvpLobbyWindow> _showPvpLobby = lobby => lobby.ShowDialog();
+
         private void BtnPvp_Click(object sender, RoutedEventArgs e)
         {
-            var pvpLobby = new Pvp.Views.PvpLobbyWindow
-            {
-                Owner = this
-            };
-            pvpLobby.ShowDialog();
+            if (_closed || _currentModel.SaveState == ResultSaveState.Saving) return;
+            ShowModeSelection();
+            var pvpLobby = new Pvp.Views.PvpLobbyWindow();
+            if (IsLoaded) pvpLobby.Owner = this;
+            _showPvpLobby(pvpLobby);
             UpdateUserProfileUI();
         }
 

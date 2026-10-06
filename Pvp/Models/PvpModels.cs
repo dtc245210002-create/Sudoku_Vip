@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace sudokuvip.Pvp.Models
 {
@@ -84,6 +84,8 @@ namespace sudokuvip.Pvp.Models
 
     public class PvpMatchResult
     {
+        public int Difficulty { get; set; }
+        public DateTime FinishedAtUtc { get; set; } = DateTime.UtcNow;
         public string MatchId { get; set; } = Guid.NewGuid().ToString("N");
         public string WinnerId { get; set; } = string.Empty;
         public bool IsDraw { get; set; }

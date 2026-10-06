@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
@@ -10,15 +10,19 @@ namespace sudokuvip.Pvp.Network
 {
     public class PvpClient : IDisposable
     {
-        private TcpClient? _tcpClient;
-        private StreamReader? _reader;
-        private StreamWriter? _writer;
-        private CancellationTokenSource? _cts;
-        private readonly SemaphoreSlim _sendLock = new(1, 1);
-
-        public bool IsConnected => _tcpClient?.Connected == true;
+        private sealed class Connection : IDisposable
+        {
+            public readonly TcpClient Tcp = new();
+            public readonly CancellationTokenSource Cts = new();
+            public StreamReader Reader = null!;
+            public StreamWriter Writer = null!;
+            public void Dispose() { Cts.Cancel(); Tcp.Dispose(); }
+        }
+        private Connection? _connection;
+        private readonly SemaphoreSlim _sendLock = new(1,1);
+        private readonly SemaphoreSlim _connectLock = new(1,1);
+        public bool IsConnected => _connection?.Tcp.Connected == true;
         public PvpPlayer? CurrentPlayer { get; private set; }
-
         public event Action? OnConnected;
         public event Action? OnDisconnected;
         public event Action<PvpMessage>? OnMessageReceived;
@@ -26,58 +30,54 @@ namespace sudokuvip.Pvp.Network
 
         public async Task<bool> ConnectAsync(string host = "127.0.0.1", int port = 5123)
         {
+            await _connectLock.WaitAsync();
+            Connection connection = new();
             try
             {
                 Disconnect();
-                _cts = new CancellationTokenSource();
-                _tcpClient = new TcpClient();
-                await _tcpClient.ConnectAsync(host, port);
-                var stream = _tcpClient.GetStream();
-                _reader = new StreamReader(stream, Encoding.UTF8);
-                _writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
-
+                _connection = connection;
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(connection.Cts.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                await connection.Tcp.ConnectAsync(host,port,timeout.Token);
+                var stream = connection.Tcp.GetStream();
+                connection.Reader = new StreamReader(stream,Encoding.UTF8);
+                connection.Writer = new StreamWriter(stream,Encoding.UTF8) { AutoFlush=true };
+                if (!ReferenceEquals(_connection,connection)) return false;
                 OnConnected?.Invoke();
-                _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+                _ = ReceiveLoopAsync(connection);
                 return true;
             }
             catch (Exception ex)
             {
+                Disconnect(connection);
                 OnError?.Invoke($"Không thể kết nối máy chủ: {ex.Message}");
                 return false;
             }
+            finally { _connectLock.Release(); }
         }
-
         public void Disconnect()
         {
-            _cts?.Cancel();
-            try { _tcpClient?.Close(); } catch { }
-            try { _reader?.Dispose(); } catch { }
-            try { _writer?.Dispose(); } catch { }
-            try { _tcpClient?.Dispose(); } catch { }
-            _reader = null;
-            _writer = null;
-            _tcpClient = null;
-            OnDisconnected?.Invoke();
+            var connection = Interlocked.Exchange(ref _connection,null);
+            if (connection != null) { connection.Dispose(); OnDisconnected?.Invoke(); }
+            CurrentPlayer = null;
         }
-
+        private void Disconnect(Connection connection)
+        {
+            if (Interlocked.CompareExchange(ref _connection,null,connection) == connection)
+            { connection.Dispose(); CurrentPlayer=null; OnDisconnected?.Invoke(); }
+        }
         public async Task SendAsync(PvpMessage message)
         {
-            if (_writer == null || !IsConnected) return;
-            string json = message.ToJson();
+            var connection = _connection;
+            if (connection?.Writer == null) return;
             await _sendLock.WaitAsync();
             try
             {
-                await _writer.WriteLineAsync(json);
-                await _writer.FlushAsync();
+                if (ReferenceEquals(_connection,connection))
+                    await connection.Writer.WriteLineAsync(message.ToJson());
             }
-            catch (Exception ex)
-            {
-                OnError?.Invoke($"Lỗi gửi gói tin: {ex.Message}");
-            }
-            finally
-            {
-                _sendLock.Release();
-            }
+            catch (Exception ex) { OnError?.Invoke($"Lỗi gửi gói tin: {ex.Message}"); Disconnect(connection); }
+            finally { _sendLock.Release(); }
         }
 
         public Task SendAsync<T>(PvpMessageType type, T payload)
@@ -160,36 +160,26 @@ namespace sudokuvip.Pvp.Network
             return SendAsync(PvpMessageType.RequestRematch, matchId);
         }
 
-        private async Task ReceiveLoopAsync(CancellationToken token)
+        private async Task ReceiveLoopAsync(Connection connection)
         {
             try
             {
-                while (!token.IsCancellationRequested && _reader != null)
+                while (!connection.Cts.IsCancellationRequested)
                 {
-                    string? line = await _reader.ReadLineAsync(token);
-                    if (line == null) break; // Disconnected by server
+                    string? line = await connection.Reader.ReadLineAsync(connection.Cts.Token);
+                    if (line == null) break;
                     var msg = PvpMessage.FromJson(line);
-                    if (msg != null)
+                    if (msg != null && ReferenceEquals(_connection,connection))
                     {
+                        if (msg.Type == PvpMessageType.HelloAck) CurrentPlayer = msg.GetPayload<PvpPlayer>();
                         OnMessageReceived?.Invoke(msg);
                     }
                 }
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                OnError?.Invoke($"Mất kết nối với máy chủ: {ex.Message}");
-            }
-            finally
-            {
-                Disconnect();
-            }
+            catch (Exception ex) { if (!connection.Cts.IsCancellationRequested) OnError?.Invoke($"Mất kết nối: {ex.Message}"); }
+            finally { Disconnect(connection); }
         }
-
-        public void Dispose()
-        {
-            Disconnect();
-            _sendLock.Dispose();
-        }
+        public void Dispose() => Disconnect();
     }
 }

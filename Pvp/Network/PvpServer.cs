@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -15,6 +15,7 @@ namespace sudokuvip.Pvp.Network
 {
     public class PvpServer : IDisposable
     {
+        internal object SyncRoot { get; } = new();
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
         private readonly ConcurrentDictionary<string, ServerSession> _sessions = new();
@@ -27,39 +28,51 @@ namespace sudokuvip.Pvp.Network
         private readonly object _queueLock = new();
         private readonly SudokuEngine _engine = new();
 
+        public IPAddress ListenAddress { get; private set; } = IPAddress.Loopback;
         public int Port { get; private set; }
         public bool IsRunning => _listener != null;
 
         public event Action<string>? OnLog;
 
-        public bool Start(int port = 5123)
+        public bool Start(int port = 5123, IPAddress? address = null)
         {
             try
             {
                 Stop();
                 Port = port;
                 _cts = new CancellationTokenSource();
-                _listener = new TcpListener(IPAddress.Any, port);
+                ListenAddress=address ?? IPAddress.Loopback;
+                _listener = new TcpListener(ListenAddress, port);
                 _listener.Start();
+                Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
                 OnLog?.Invoke($"[PvP Server] Đang lắng nghe trên cổng {port}...");
-                _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
+                var listener=_listener; var token=_cts.Token;
+                _ = Task.Run(() => AcceptLoopAsync(listener,token));
                 return true;
             }
             catch (Exception ex)
             {
                 OnLog?.Invoke($"[PvP Server] Lỗi khởi động trên cổng {port}: {ex.Message}");
+                Stop();
                 return false;
             }
         }
 
         public void Stop()
         {
+            lock (SyncRoot) StopCore();
+        }
+        private void StopCore()
+        {
             _cts?.Cancel();
+            _cts?.Dispose();
+            _cts=null;
             try { _listener?.Stop(); } catch { }
             _listener = null;
             foreach (var s in _sessions.Values) s.Dispose();
             _sessions.Clear();
             _rooms.Clear();
+            foreach (var match in _matches.Values) match.Stop();
             _matches.Clear();
             lock (_queueLock)
             {
@@ -68,13 +81,13 @@ namespace sudokuvip.Pvp.Network
             OnLog?.Invoke("[PvP Server] Đã dừng máy chủ.");
         }
 
-        private async Task AcceptLoopAsync(CancellationToken token)
+        private async Task AcceptLoopAsync(TcpListener listener,CancellationToken token)
         {
-            while (!token.IsCancellationRequested && _listener != null)
+            while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    var tcpClient = await _listener.AcceptTcpClientAsync(token);
+                    var tcpClient = await listener.AcceptTcpClientAsync(token);
                     var session = new ServerSession(tcpClient, this);
                     _sessions[session.SessionId] = session;
                     _ = Task.Run(() => session.RunAsync(token));
@@ -89,6 +102,10 @@ namespace sudokuvip.Pvp.Network
         }
 
         internal void HandleDisconnect(ServerSession session)
+        {
+            lock (SyncRoot) HandleDisconnectCore(session);
+        }
+        private void HandleDisconnectCore(ServerSession session)
         {
             _sessions.TryRemove(session.SessionId, out _);
             RemoveFromQueue(session);
@@ -118,6 +135,7 @@ namespace sudokuvip.Pvp.Network
 
         internal void Enqueue(ServerSession session, int difficulty)
         {
+            LeaveRoom(session);
             RemoveFromQueue(session);
             ServerSession? opponent = null;
 
@@ -129,6 +147,7 @@ namespace sudokuvip.Pvp.Network
                 {
                     opponent = queue[0];
                     queue.RemoveAt(0);
+                    opponent.QueueDifficulty = null;
                 }
                 else
                 {
@@ -165,6 +184,8 @@ namespace sudokuvip.Pvp.Network
 
         internal void CreateRoom(ServerSession session, int difficulty)
         {
+            RemoveFromQueue(session); LeaveRoom(session);
+            difficulty=Math.Clamp(difficulty,0,3);
             string pin = GenerateRoomPin();
             var room = new ServerRoom(pin, difficulty, session);
             _rooms[pin] = room;
@@ -175,6 +196,7 @@ namespace sudokuvip.Pvp.Network
         internal void JoinRoom(ServerSession session, string pin)
         {
             pin = pin.Trim();
+            if (session.CurrentRoomId == pin) return;
             if (!_rooms.TryGetValue(pin, out var room))
             {
                 session.Send(PvpMessageType.Error, new MsgErrorPayload { Message = "Không tìm thấy phòng với mã PIN này." });
@@ -193,6 +215,7 @@ namespace sudokuvip.Pvp.Network
                 return;
             }
 
+            RemoveFromQueue(session); LeaveRoom(session);
             room.AddPlayer(session);
             session.CurrentRoomId = pin;
             room.BroadcastUpdate();
@@ -219,6 +242,7 @@ namespace sudokuvip.Pvp.Network
         {
             if (session.CurrentRoomId != null && _rooms.TryGetValue(session.CurrentRoomId, out var room))
             {
+                if (room.Status != PvpRoomStatus.Waiting || session.CurrentMatchId != null) return;
                 room.SetReady(session, isReady);
                 room.BroadcastUpdate();
 
@@ -247,6 +271,8 @@ namespace sudokuvip.Pvp.Network
 
         internal void StartBotMatch(ServerSession session, int difficulty)
         {
+            RemoveFromQueue(session); LeaveRoom(session);
+            difficulty = Math.Clamp(difficulty,0,3);
             var model = _engine.StartNewGame(difficulty);
             var boardData = PvpBoardData.FromModel(model);
             var bot = new PvpAiBot(boardData, difficulty, session.Player.EloRating);
@@ -269,11 +295,11 @@ namespace sudokuvip.Pvp.Network
             match.Start();
         }
 
-        internal void HandleProgress(ServerSession session, MsgProgressPayload prog)
+        internal void HandleProgress(ServerSession session, MsgMovePayload prog)
         {
-            if (session.CurrentMatchId != null && _matches.TryGetValue(session.CurrentMatchId, out var match))
+            if (session.CurrentMatchId == prog.MatchId && _matches.TryGetValue(prog.MatchId, out var match))
             {
-                match.HandleProgress(session.Player.Id, prog.CellIndex, prog.IsCorrect, prog.Mistakes, prog.FilledCorrect, prog.Score);
+                match.HandleMove(session, prog);
             }
         }
 
@@ -296,6 +322,8 @@ namespace sudokuvip.Pvp.Network
         internal void HandleMatchFinished(ServerMatch match)
         {
             _matches.TryRemove(match.MatchId, out _);
+            foreach (var session in _sessions.Values.Where(s => s.CurrentMatchId == match.MatchId).ToArray())
+            { session.CurrentMatchId = null; session.Player.IsReady = false; LeaveRoom(session); }
         }
 
         #endregion
@@ -319,7 +347,8 @@ namespace sudokuvip.Pvp.Network
         private readonly StreamReader _reader;
         private readonly StreamWriter _writer;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
-        private bool _disposed;
+        private volatile bool _disposed;
+        private bool _helloReceived;
 
         public ServerSession(TcpClient client, PvpServer server)
         {
@@ -342,7 +371,7 @@ namespace sudokuvip.Pvp.Network
                     var msg = PvpMessage.FromJson(line);
                     if (msg != null)
                     {
-                        ProcessMessage(msg);
+                        lock (_server.SyncRoot) ProcessMessage(msg);
                     }
                 }
             }
@@ -356,15 +385,21 @@ namespace sudokuvip.Pvp.Network
 
         private void ProcessMessage(PvpMessage msg)
         {
+            if (_disposed) return;
+            if (msg.Type != PvpMessageType.Hello && !_helloReceived) return;
+            if (CurrentMatchId != null && msg.Type is PvpMessageType.JoinQueue or PvpMessageType.CreateRoom or PvpMessageType.JoinRoom or PvpMessageType.StartBotMatch)
+            { Send(PvpMessageType.Error,new MsgErrorPayload { Message="Bạn đang trong một trận đấu." }); return; }
             switch (msg.Type)
             {
                 case PvpMessageType.Hello:
                     var hello = msg.GetPayload<PvpPlayer>();
-                    if (hello != null)
+                    if (hello != null && !_helloReceived)
                     {
                         Player = hello;
                         Player.Id = SessionId;
-                        Send(PvpMessageType.HelloAck, "OK");
+                        Player.IsBot = false; Player.IsReady = false;
+                        _helloReceived = true;
+                        Send(PvpMessageType.HelloAck, Player);
                     }
                     break;
 
@@ -401,8 +436,8 @@ namespace sudokuvip.Pvp.Network
                     _server.StartBotMatch(this, diff);
                     break;
 
-                case PvpMessageType.PlayerProgress:
-                    var prog = msg.GetPayload<MsgProgressPayload>();
+                case PvpMessageType.PlayerMove:
+                    var prog = msg.GetPayload<MsgMovePayload>();
                     if (prog != null && CurrentMatchId != null)
                     {
                         _server.HandleProgress(this, prog);
@@ -418,7 +453,7 @@ namespace sudokuvip.Pvp.Network
                     break;
 
                 case PvpMessageType.Surrender:
-                    if (CurrentMatchId != null)
+                    if (CurrentMatchId != null && msg.GetPayload<string>() == CurrentMatchId)
                     {
                         _server.HandleSurrender(this);
                     }
@@ -440,8 +475,11 @@ namespace sudokuvip.Pvp.Network
         {
             if (_disposed) return;
             string json = message.ToJson();
-            _ = Task.Run(async () =>
-            {
+            _ = SendOrderedAsync(json);
+        }
+
+        private async Task SendOrderedAsync(string json)
+        {
                 await _sendLock.WaitAsync();
                 try
                 {
@@ -456,7 +494,6 @@ namespace sudokuvip.Pvp.Network
                 {
                     _sendLock.Release();
                 }
-            });
         }
 
         public void Dispose()
@@ -467,7 +504,7 @@ namespace sudokuvip.Pvp.Network
             try { _reader.Dispose(); } catch { }
             try { _writer.Dispose(); } catch { }
             try { _client.Dispose(); } catch { }
-            _sendLock.Dispose();
+            // Pending writes release this semaphore after the socket closes.
         }
     }
 
@@ -481,7 +518,7 @@ namespace sudokuvip.Pvp.Network
 
         public bool IsEmpty => Player1Session == null && Player2Session == null;
         public bool IsFull => Player1Session != null && Player2Session != null;
-        public bool CanStart => IsFull && Player1Session!.Player.IsReady && Player2Session!.Player.IsReady;
+        public bool CanStart => Status == PvpRoomStatus.Waiting && IsFull && Player1Session!.Player.IsReady && Player2Session!.Player.IsReady;
 
         public ServerRoom(string pin, int difficulty, ServerSession host)
         {
@@ -547,11 +584,15 @@ namespace sudokuvip.Pvp.Network
         private readonly PvpMatchStats _stats2;
         private readonly DateTime _startTime = DateTime.Now;
         private bool _isFinished;
-        private readonly object _lock = new();
+        private readonly object _lock;
+        private readonly PvpBoardState _state1;
+        private readonly PvpBoardState _state2;
 
         public ServerMatch(PvpServer server, ServerSession p1, ServerSession? p2, PvpAiBot? bot, PvpBoardData board, int difficulty)
         {
             _server = server;
+            _lock = server.SyncRoot;
+            _state1 = new(board); _state2 = new(board);
             _p1 = p1;
             _p2 = p2;
             _bot = bot;
@@ -595,7 +636,13 @@ namespace sudokuvip.Pvp.Network
                 // Wire up bot events
                 _bot.OnProgressUpdated += (idx, correct, mistakes, count, score) =>
                 {
-                    HandleProgress(_stats2.PlayerId, idx, correct, mistakes, count, score);
+                    lock (_lock)
+                    {
+                        if (_isFinished) return;
+                        int value = correct ? _board.Solution[idx] : _board.Solution[idx] % 9 + 1;
+                        var operation = new MsgMovePayload { MatchId=MatchId,Sequence=_state2.Sequence+1,CellIndex=idx,Value=value };
+                        if (_state2.Apply(operation,out int cell)) PublishProgress(false,cell);
+                    }
                 };
                 _bot.OnEmoteSent += (emote) =>
                 {
@@ -605,54 +652,31 @@ namespace sudokuvip.Pvp.Network
             }
         }
 
-        public void HandleProgress(string playerId, int cellIndex, bool isCorrect, int mistakes, int filledCorrect, int score)
+        public void Stop() { lock (_lock) { _isFinished=true; _bot?.Stop(); } }
+        public void HandleMove(ServerSession sender, MsgMovePayload move)
         {
             lock (_lock)
             {
-                if (_isFinished) return;
-
-                bool isP1 = playerId == _p1.Player.Id;
-                var currentStats = isP1 ? _stats1 : _stats2;
-                currentStats.FilledCorrect = filledCorrect;
-                currentStats.Mistakes = mistakes;
-                currentStats.Score = score;
-
-                // Forward to opponent
-                var progPayload = new MsgProgressPayload
-                {
-                    MatchId = MatchId,
-                    CellIndex = cellIndex,
-                    IsCorrect = isCorrect,
-                    Mistakes = mistakes,
-                    FilledCorrect = filledCorrect,
-                    TotalEmpty = _board.TotalEmpty,
-                    Score = score
-                };
-
-                if (isP1)
-                {
-                    _p2?.Send(PvpMessageType.OpponentProgress, progPayload);
-                }
-                else
-                {
-                    _p1.Send(PvpMessageType.OpponentProgress, progPayload);
-                }
-
-                // Check Win Conditions
-                // 1. Player solved the entire board!
-                if (filledCorrect >= _board.TotalEmpty)
-                {
-                    EndMatch(isP1 ? _p1.Player.Id : _stats2.PlayerId, "Hoàn thành toàn bộ bàn cờ!");
-                    return;
-                }
-
-                // 2. Player exceeded 3 mistakes -> Opponent wins by KO!
-                if (mistakes >= 3)
-                {
-                    EndMatch(isP1 ? _stats2.PlayerId : _p1.Player.Id, $"{currentStats.DisplayName} phạm 3 lỗi (K.O)!");
-                    return;
-                }
+                if (_isFinished || move.MatchId != MatchId || (sender != _p1 && sender != _p2)) return;
+                bool isP1 = sender == _p1;
+                var state = isP1 ? _state1 : _state2;
+                if (!state.Apply(move,out int changedCell))
+                { sender.Send(PvpMessageType.Error,new MsgErrorPayload {Message="Bước đi không hợp lệ hoặc sai thứ tự."}); return; }
+                PublishProgress(isP1,changedCell);
             }
+        }
+        private void PublishProgress(bool isP1, int cell)
+        {
+            var state = isP1 ? _state1 : _state2;
+            var stats = isP1 ? _stats1 : _stats2;
+            var progress = state.Progress(MatchId,cell);
+            stats.FilledCorrect=progress.FilledCorrect; stats.Mistakes=progress.Mistakes; stats.Score=progress.Score;
+            (isP1 ? _p1 : _p2)?.Send(PvpMessageType.LocalProgress,progress);
+            (isP1 ? _p2 : _p1)?.Send(PvpMessageType.OpponentProgress,progress);
+            if (state.Filled == state.TotalEmpty)
+                EndMatch(stats.PlayerId,"Hoàn thành toàn bộ bàn cờ!");
+            else if (state.Model.Mistakes >= 3)
+                EndMatch(isP1 ? _stats2.PlayerId : _stats1.PlayerId,$"{stats.DisplayName} phạm 3 lỗi (K.O)!");
         }
 
         public void HandleEmote(string senderId, string emote)
@@ -702,6 +726,7 @@ namespace sudokuvip.Pvp.Network
             var result = new PvpMatchResult
             {
                 MatchId = MatchId,
+                Difficulty = _difficulty,
                 WinnerId = winnerId,
                 Reason = reason,
                 Player1 = _p1.Player,

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace sudokuvip.Models
 {
@@ -26,6 +26,10 @@ namespace sudokuvip.Models
     public class GameHistoryRecord
     {
         public Guid GameId { get; set; } = Guid.NewGuid();
+        public bool IsPvp { get; set; }
+        public string MatchId { get; set; } = "";
+        public string Opponent { get; set; } = "";
+        public int EloAfter { get; set; } = 1200;
         public int HistoryId { get; set; }
         public int UserId { get; set; }
         public string Difficulty { get; set; } = string.Empty;
@@ -35,6 +39,7 @@ namespace sudokuvip.Models
         public bool IsWin { get; set; }
         public DateTime PlayedAt { get; set; }
 
+        public string EloFormatted => IsPvp ? EloAfter.ToString() : "—";
         public string DurationFormatted
         {
             get

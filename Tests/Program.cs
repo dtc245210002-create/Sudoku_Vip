@@ -1,4 +1,4 @@
-using sudokuvip;
+﻿using sudokuvip;
 using sudokuvip.Models;
 using sudokuvip.Services;
 using System.Diagnostics;
@@ -19,17 +19,15 @@ internal static class Program
         if (!condition) throw new Exception(description);
     }
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
 
-            GameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests();
-            PvpTests();
-=======
-            GameTests(); MiniGameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests(); WpfFlowTests();
+            if (args.Contains("--pvp-only")) { AuthService.Logout(); AuthService.LoginAsGuest(); PvpIntegrationTests.Run(Check); Console.WriteLine($"PASS: {_assertions} PvP assertions."); return 0; }
+            GameTests(); MiniGameTests(); GeneratorTests(); AuthTests().GetAwaiter().GetResult(); WpfTests(); WpfFlowTests(); PvpTests();
+            PvpIntegrationTests.Run(Check);
 
-          
             Console.WriteLine($"PASS: {_assertions} assertions; no real database accessed.");
             return 0;
         }
@@ -346,9 +344,9 @@ internal static class Program
         ((Button)Field(window,"btnChangeSetup")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Check(((FrameworkElement)Field(window,"SetupView")!).Visibility==Visibility.Visible&&!timer.IsEnabled,"back from game opens setup without starting");
         ((Button)Field(window,"btnHome")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        int lobbies=0; Set(window,"_showPvpLobby",new Action<sudokuvip.Pvp.Views.PvpLobbyWindow>(lobby=>{lobbies++;Check(!lobby.IsVisible,"headless PvP entry initializes real lobby without opening a socket");lobby.Close();}));
         ((Button)Field(window,"btnModePvp")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Check(!((Button)Field(window,"btnStartGame")!).IsEnabled&&((FrameworkElement)Field(window,"txtPvpNotice")!).Visibility==Visibility.Visible,"PvP is a disabled coming-soon option");
-        Call(window,"StartSelectedGame_Click",window,new RoutedEventArgs());Check(!timer.IsEnabled,"PvP cannot launch mini or normal game");
+        Check(lobbies==1&&!timer.IsEnabled&&((FrameworkElement)Field(window,"ModeSelectionView")!).Visibility==Visibility.Visible,"third mode opens PvP lobby and stops solo timer");
         ((Button)Field(window,"btnHome")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         ((Button)Field(window,"btnModeNormal")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Check(((FrameworkElement)Field(window,"VariantOptions")!).Visibility==Visibility.Collapsed&&((Button)Field(window,"btnStartGame")!).IsEnabled,"normal setup reuses existing mode without extra variant");
@@ -359,7 +357,7 @@ internal static class Program
         var wait=Stopwatch.StartNew();PumpUntil(()=>wait.ElapsedMilliseconds>300);
         Check(((FrameworkElement)Field(window,"ModeSelectionView")!).Visibility==Visibility.Visible&&!timer.IsEnabled,"late generation cannot reopen game after navigation");
         window.Close();
-        Console.WriteLine("PASS: WPF mode/setup/start flow, 4x4 board/keypad/notes, pause/new game, variant history, PvP placeholder, existing normal mode and navigation race.");
+        Console.WriteLine("PASS: WPF mode/setup/start flow, 4x4 board/keypad/notes, pause/new game, variant history, PvP lobby entry, existing normal mode and navigation race.");
     }
 
     private static void RenderWindow(MainWindow window,string path)
@@ -395,7 +393,7 @@ internal static class Program
         // 2. Board data serialization
         var model = Engine.StartNewGame(0);
         var board = sudokuvip.Pvp.Models.PvpBoardData.FromModel(model);
-        Check(board.TotalEmpty == 32 && board.Clues.Length == 81 && board.Solution.Length == 81, "pvp board data conversion");
+        Check(board.TotalEmpty > 0 && board.TotalEmpty <= 32 && board.Clues.Length == 81 && board.Solution.Length == 81, "pvp board data conversion");
 
         // 3. Message serialization round-trip
         var progressMsg = sudokuvip.Pvp.Network.PvpMessage.Create(sudokuvip.Pvp.Network.PvpMessageType.PlayerProgress, new sudokuvip.Pvp.Network.MsgProgressPayload

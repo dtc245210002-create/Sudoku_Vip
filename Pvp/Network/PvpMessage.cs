@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using sudokuvip.Pvp.Models;
@@ -20,6 +20,8 @@ namespace sudokuvip.Pvp.Network
         StartBotMatch,
         StartMatch,
         PlayerProgress,
+        PlayerMove,
+        LocalProgress,
         OpponentProgress,
         SendEmote,
         OpponentEmote,
@@ -105,10 +107,22 @@ namespace sudokuvip.Pvp.Network
         public int Difficulty { get; set; }
     }
 
+    public enum PvpOperation { Move, Erase, Undo, Note }
+    public class MsgMovePayload
+    {
+        public string MatchId { get; set; } = "";
+        public long Sequence { get; set; }
+        public PvpOperation Operation { get; set; }
+        public int CellIndex { get; set; }
+        public int Value { get; set; }
+    }
+
     public class MsgProgressPayload
     {
         public string MatchId { get; set; } = string.Empty;
         public int CellIndex { get; set; }
+        public long Sequence { get; set; }
+        public int[] CellStates { get; set; } = [];
         public bool IsCorrect { get; set; }
         public int Mistakes { get; set; }
         public int FilledCorrect { get; set; }
