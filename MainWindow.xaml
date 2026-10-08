@@ -200,7 +200,7 @@
                     <Button x:Name="btnVariant4x4" Click="Variant4x4_Click" Style="{StaticResource ChoiceBtnStyle}" AutomationProperties.Name="Sudoku 4×4"><DockPanel>
                         <Border Background="#293448" CornerRadius="8" Width="42" Height="42" Margin="0,0,14,0"><TextBlock Text="⊞" Foreground="#9BC5FF" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                         <TextBlock x:Name="txtVariantCheck" Text="○" Foreground="#777785" FontSize="25" DockPanel.Dock="Right" VerticalAlignment="Center"/>
-                        <StackPanel VerticalAlignment="Center"><TextBlock Text="Sudoku 4×4" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="16 ô · Số 1–4 · Khối 2×2" Foreground="#A4A4B0" FontSize="12" Margin="0,6,0,0"/></StackPanel>
+                        <StackPanel VerticalAlignment="Center"><TextBlock Text="Sudoku 2×2" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="16 ô · Số 1–4 · Khối 2×2" Foreground="#A4A4B0" FontSize="12" Margin="0,6,0,0"/></StackPanel>
                     </DockPanel></Button>
                 </StackPanel>
                 <TextBlock x:Name="txtPvpNotice" Text="Thi đấu đối kháng · Sắp ra mắt" Foreground="#A4A4B0" FontSize="13" Margin="0,28,0,0" Visibility="Collapsed"/>
@@ -212,7 +212,7 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <Grid Margin="0,0,0,18"><StackPanel>
                     <StackPanel Orientation="Horizontal"><Button x:Name="btnChangeSetup" Content="Biến thể Sudoku" Click="ChangeSetup_Click" Foreground="#A1A1AB" Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"/><TextBlock Text="  ›  " Foreground="#676773"/><TextBlock x:Name="txtGameVariant" Text="Mini Sudoku" Foreground="#A1A1AB" FontSize="12"/></StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0"><TextBlock x:Name="txtGameTitle" Text="Sudoku 4×4" Foreground="White" FontSize="24" FontWeight="SemiBold"/><Border Background="#243650" BorderBrush="#344D6D" BorderThickness="1" CornerRadius="5" Padding="8,4" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Name="txtDifficultyBadge" Text="Dễ" Foreground="#9FCAFF" FontSize="11"/></Border></StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0"><TextBlock x:Name="txtGameTitle" Text="Sudoku 2×2" Foreground="White" FontSize="24" FontWeight="SemiBold"/><Border Background="#243650" BorderBrush="#344D6D" BorderThickness="1" CornerRadius="5" Padding="8,4" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Name="txtDifficultyBadge" Text="Dễ" Foreground="#9FCAFF" FontSize="11"/></Border></StackPanel>
                 </StackPanel><Button Content="ⓘ  Luật chơi" Click="Rules_Click" Foreground="#A4A4AF" Background="Transparent" BorderThickness="0" Cursor="Hand" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
                 <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="550"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
